@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VPN Control Console</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand-row">
+        <div class="brand-mark">WG</div>
+        <div>
+          <strong>VPN Console</strong>
+          <span>WireGuard Ops</span>
+        </div>
+      </div>
+      <nav class="nav-list">
+        <a href="#control">入口控制</a>
+        <a href="#users">账号管理</a>
+        <a href="#logs">操作记录</a>
+      </nav>
+      <form method="post" action="{{ url_for('logout') }}" class="logout-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button type="submit">退出 {{ current_user.username }}</button>
+      </form>
+    </aside>
+
+    <main class="content">
+      <header class="hero-strip">
+        <div>
+          <p class="eyebrow">LIVE CONFIGURATION</p>
+          <h1>外网端口与订阅中枢</h1>
+        </div>
+        <form method="post" action="{{ url_for('refresh') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="primary-btn compact" type="submit">刷新配置</button>
+        </form>
+      </header>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <div class="flash-stack">
+            {% for category, message in messages %}
+              <div class="flash {{ category }}">{{ message }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
+      <section id="control" class="metrics-grid">
+        <article class="metric-card">
+          <span>当前公网地址</span>
+          <strong>{{ runtime.server_url }}</strong>
+        </article>
+        <article class="metric-card hot">
+          <span>当前外网端口</span>
+          <strong>{{ runtime.server_port }}</strong>
+        </article>
+        <article class="metric-card">
+          <span>当前 PEERS</span>
+          <strong>{{ runtime.peers }}</strong>
+        </article>
+      </section>
+
+      <section class="panel-grid single">
+        <article class="panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">SWITCH</p>
+              <h2>切换入口配置</h2>
+            </div>
+          </div>
+          <form method="post" action="{{ url_for('apply_settings') }}" class="control-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label>
+              <span>公网地址</span>
+              <input name="server_url" value="{{ settings.server_url }}" required>
+            </label>
+            <div class="two-col">
+              <label>
+                <span>外网端口</span>
+                <input name="server_port" type="number" min="1" max="65535" value="{{ settings.server_port }}" required>
+              </label>
+              <label>
+                <span>PEERS</span>
+                <input name="peers" type="number" min="1" max="250" value="{{ settings.peers }}" required>
+              </label>
+            </div>
+            <button class="primary-btn" type="submit">应用并重启容器</button>
+          </form>
+        </article>
+      </section>
+
+      <section id="users" class="panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">ACCOUNTS</p>
+            <h2>账号管理</h2>
+          </div>
+        </div>
+        <form method="post" action="{{ url_for('create_user') }}" class="user-create">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input name="username" placeholder="用户名" required>
+          <input name="password" type="password" placeholder="初始密码，至少 8 位" required>
+          <select name="role">
+            <option value="user">user</option>
+            <option value="admin">admin</option>
+          </select>
+          <button class="secondary-btn" type="submit">创建用户</button>
+        </form>
+        <div class="table-wrap">
+          <table>
+            <colgroup>
+              <col class="col-id">
+              <col class="col-account">
+              <col class="col-role">
+              <col class="col-status">
+              <col class="col-subscription">
+              <col class="col-actions">
+            </colgroup>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>账号</th>
+                <th>角色</th>
+                <th>状态</th>
+                <th>订阅</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for user in users %}
+              <tr>
+                <td>{{ user.id }}</td>
+                <td>{{ user.username }}</td>
+                <td>{{ user.role }}</td>
+                <td><span class="pill {{ 'ok' if user.is_active else 'off' }}">{{ '启用' if user.is_active else '禁用' }}</span></td>
+                <td>
+                  {% if user.subscription_url %}
+                    <div class="subscription-cell">
+                      <code class="table-url" id="sub-link-{{ user.id }}">{{ user.subscription_url }}</code>
+                      <button class="mini-copy" type="button" data-copy-target="sub-link-{{ user.id }}">复制</button>
+                    </div>
+                  {% else %}
+                    <span class="muted">重置 token 后可用</span>
+                  {% endif %}
+                </td>
+                <td class="actions">
+                  <form method="post" action="{{ url_for('toggle_user', user_id=user.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit">{{ '禁用' if user.is_active else '启用' }}</button>
+                  </form>
+                  <form method="post" action="{{ url_for('reset_token', user_id=user.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit">重置 token</button>
+                  </form>
+                  <form method="post" action="{{ url_for('reset_password', user_id=user.id) }}" class="inline-password">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input name="password" type="password" placeholder="新密码">
+                    <button type="submit">改密</button>
+                  </form>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="logs" class="panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">AUDIT</p>
+            <h2>最近操作</h2>
+          </div>
+        </div>
+        <div class="log-list">
+          {% for log in logs %}
+          <div class="log-row">
+            <span class="pill {{ 'ok' if log.success else 'off' }}">{{ '成功' if log.success else '失败' }}</span>
+            <strong>{{ log.action }}</strong>
+            <span>{{ log.detail }}</span>
+            <time>{{ log.created_at.strftime('%Y-%m-%d %H:%M:%S') if log.created_at else '' }}</time>
+          </div>
+          {% endfor %}
+        </div>
+      </section>
+    </main>
+  </div>
+  <div class="toast" id="copy-toast">已复制</div>
+  <script>
+    function copyText(text) {
+      if (navigator.clipboard && window.isSecureContext) {
+        return navigator.clipboard.writeText(text);
+      }
+      const area = document.createElement("textarea");
+      area.value = text;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.left = "-9999px";
+      document.body.appendChild(area);
+      area.select();
+      document.execCommand("copy");
+      document.body.removeChild(area);
+      return Promise.resolve();
+    }
+
+    document.querySelectorAll("[data-copy-target]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const target = document.getElementById(button.dataset.copyTarget);
+        if (!target) return;
+        await copyText(target.textContent.trim());
+        const toast = document.getElementById("copy-toast");
+        toast.classList.add("show");
+        window.setTimeout(() => toast.classList.remove("show"), 1400);
+      });
+    });
+
+  </script>
+</body>
+</html>

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VPN Console Login</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body class="login-body">
+  <main class="login-shell">
+    <section class="login-panel">
+      <div class="brand-mark">WG</div>
+      <p class="eyebrow">WIREGUARD CONTROL</p>
+      <h1>外网入口控制台</h1>
+      <p class="muted">登录后可切换公网端口、调整 PEERS、刷新 Clash 订阅，并管理订阅 token。</p>
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <div class="flash-stack">
+            {% for category, message in messages %}
+              <div class="flash {{ category }}">{{ message }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+      <form method="post" class="form-stack">
+        <label>
+          <span>账号</span>
+          <input name="username" autocomplete="username" required>
+        </label>
+        <label>
+          <span>密码</span>
+          <input name="password" type="password" autocomplete="current-password" required>
+        </label>
+        <button class="primary-btn" type="submit">进入控制台</button>
+      </form>
+    </section>
+  </main>
+</body>
+</html>

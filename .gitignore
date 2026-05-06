@@ -1,0 +1,9 @@
+.env
+*.bak
+*.log
+run.log
+clash-config.yaml
+vpn-config/
+__pycache__/
+*.py[cod]
+.DS_Store

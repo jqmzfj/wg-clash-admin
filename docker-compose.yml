@@ -1,0 +1,51 @@
+services:
+  wireguard:
+    image: linuxserver/wireguard:latest
+    container_name: ${WIREGUARD_CONTAINER_NAME:-wireguard}
+    network_mode: bridge # 默认桥接模式
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - TZ=${TZ:-Asia/Shanghai}
+      - SERVERURL=${SERVERURL:?set SERVERURL in .env}
+      - SERVERPORT=${SERVERPORT:-18021}
+      - PEERS=${PEERS:-10}
+      - PEERDNS=${PEERDNS:-1.1.1.1}
+      - INTERNAL_SUBNET=${INTERNAL_SUBNET:-10.66.66.0/24}
+    ports:
+      - "${SERVERPORT:-18021}:51820/udp"
+    volumes:
+      - ./vpn-config:/config
+    restart: unless-stopped
+
+  vpn-admin:
+    build:
+      context: ./admin
+    container_name: ${ADMIN_CONTAINER_NAME:-vpn-admin}
+    network_mode: ${ADMIN_NETWORK_MODE:-host}
+    working_dir: ${VPN_DIR:-/app/vpn}/admin
+    environment:
+      - APP_SECRET=${APP_SECRET:?set APP_SECRET in .env}
+      - DATABASE_URL=${DATABASE_URL:?set DATABASE_URL in .env}
+      - REDIS_URL=${REDIS_URL:?set REDIS_URL in .env}
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:?set ADMIN_PASSWORD in .env}
+      - HOST=${HOST:-0.0.0.0}
+      - PORT=${PORT:-19090}
+      - VPN_DIR=${VPN_DIR:-/app/vpn}
+      - URL_PREFIX=${URL_PREFIX:-/sub/clash}
+      - STARTUP_WAIT_SECONDS=${STARTUP_WAIT_SECONDS:-90}
+      - ADMIN_SERVER=${ADMIN_SERVER:-simple}
+      - GUNICORN_WORKERS=${GUNICORN_WORKERS:-1}
+      - GUNICORN_THREADS=${GUNICORN_THREADS:-2}
+      - GUNICORN_TIMEOUT=${GUNICORN_TIMEOUT:-120}
+      - MALLOC_ARENA_MAX=${MALLOC_ARENA_MAX:-2}
+      - PYTHONOPTIMIZE=${PYTHONOPTIMIZE:-2}
+      - PYTHONDONTWRITEBYTECODE=${PYTHONDONTWRITEBYTECODE:-1}
+    volumes:
+      - .:${VPN_DIR:-/app/vpn}
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
