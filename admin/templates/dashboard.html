@@ -16,8 +16,20 @@
           <span>WireGuard Ops</span>
         </div>
       </div>
+      {% if version.update_available %}
+        <a class="update-badge" href="#version">
+          <span>发现新版本</span>
+          <strong>{{ version.local_version }} → {{ version.remote_version }}</strong>
+        </a>
+      {% elif version.checking %}
+        <div class="update-badge quiet">
+          <span>正在检查</span>
+          <strong>{{ version.local_version }}</strong>
+        </div>
+      {% endif %}
       <nav class="nav-list">
         <a href="#control">入口控制</a>
+        <a href="#version">版本更新</a>
         <a href="#users">账号管理</a>
         <a href="#logs">操作记录</a>
       </nav>
@@ -91,6 +103,49 @@
             <button class="primary-btn" type="submit">应用并重启容器</button>
           </form>
         </article>
+      </section>
+
+      <section id="version" class="panel version-panel">
+        <div class="panel-heading version-heading">
+          <div>
+            <p class="eyebrow">VERSION</p>
+            <h2>版本管理</h2>
+          </div>
+          {% if current_user.role == 'admin' %}
+            <div class="version-actions">
+              <form method="post" action="{{ url_for('check_version') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="ghost-btn" type="submit">立即检查</button>
+              </form>
+              {% if version.update_available %}
+                <form method="post" action="{{ url_for('update_version') }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button class="update-btn" type="submit" onclick="return confirm('确认更新到 {{ version.remote_version }}？更新期间后台容器会重建。')">更新新版本</button>
+                </form>
+              {% endif %}
+            </div>
+          {% endif %}
+        </div>
+        <div class="version-meta">
+          <span>当前版本 <strong>{{ version.local_version }}</strong></span>
+          <span>远端版本 <strong>{{ version.remote_version or '未获取' }}</strong></span>
+          <span>检测分支 <strong>{{ version.branch }}</strong></span>
+          <span>上次检查 <strong>{{ version.checked_at }}</strong></span>
+        </div>
+        <code class="version-remote">{{ version.repo_dir }}</code>
+        {% if version.repo_url %}
+          <code class="version-remote">{{ version.repo_url }}</code>
+        {% endif %}
+        <p class="version-note">后台每 5 小时检查一次源码仓库的版本文件；发现远端版本不同后才会提示更新。确认更新后会拉取源码仓库，并把白名单路径同步覆盖到运行目录。</p>
+        {% if version.update_available %}
+          <p class="version-note hot-note">发现新版本 {{ version.remote_version }}，可以更新。</p>
+        {% elif version.checking %}
+          <p class="version-note">版本检查正在后台执行，请稍后刷新页面。</p>
+        {% elif version.error %}
+          <p class="version-note warning">{{ version.error }}</p>
+        {% else %}
+          <p class="version-note">当前已经是最新版本。</p>
+        {% endif %}
       </section>
 
       <section id="users" class="panel">

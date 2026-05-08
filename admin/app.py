@@ -5,6 +5,7 @@ import hmac
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import threading
 import time
@@ -17,6 +18,7 @@ import redis
 from flask import (
     Flask,
     Response,
+    abort,
     flash,
     g,
     redirect,
@@ -36,6 +38,16 @@ COMPOSE_FILE = VPN_DIR / "docker-compose.yml"
 CLASH_FILE = VPN_DIR / "clash-config.yaml"
 RUN_SCRIPT = VPN_DIR / "run.sh"
 PEER_ROOT = VPN_DIR / "vpn-config"
+UPDATE_REPO_DIR = Path(os.environ.get("UPDATE_REPO_DIR", VPN_DIR / "wg-clash-admin")).resolve()
+UPDATE_REPO_URL = os.environ.get("UPDATE_REPO_URL", "https://github.com/jqmzfj/wg-clash-admin.git").strip()
+UPDATE_BRANCH = os.environ.get("UPDATE_BRANCH", "").strip()
+UPDATE_VERSION_FILE = os.environ.get("UPDATE_VERSION_FILE", "VERSION").strip() or "VERSION"
+UPDATE_CHECK_INTERVAL_SECONDS = int(os.environ.get("UPDATE_CHECK_INTERVAL_SECONDS", "18000"))
+UPDATE_SYNC_PATHS = os.environ.get(
+    "UPDATE_SYNC_PATHS",
+    "admin,run.sh,generate_clash_yaml.py,docker-compose.yml,README.md,.env.example,VERSION",
+)
+UPDATE_STATE_KEY = "version:update_state"
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 14
 LOCK_TTL_SECONDS = 180
 RESERVED_PORTS = {22, 25, 53, 80, 110, 143, 443, 465, 587, 993, 995, 2375, 2376, 5432, 6379}
@@ -415,11 +427,160 @@ def update_peer_endpoints(server_url, port):
         conf.write_text(text, encoding="utf-8")
 
 
-def run_command(args, timeout=120):
-    completed = subprocess.run(args, cwd=VPN_DIR, text=True, capture_output=True, timeout=timeout)
+def run_command(args, timeout=120, cwd=None):
+    completed = subprocess.run(args, cwd=cwd or VPN_DIR, text=True, capture_output=True, timeout=timeout)
     if completed.returncode != 0:
         raise RuntimeError((completed.stderr or completed.stdout or "命令执行失败").strip())
     return completed.stdout.strip()
+
+
+def repo_git_command(args, timeout=30):
+    return run_command(["git", "-c", f"safe.directory={UPDATE_REPO_DIR}", *args], timeout=timeout, cwd=UPDATE_REPO_DIR)
+
+
+def optional_repo_git_command(args, timeout=10):
+    try:
+        return repo_git_command(args, timeout=timeout)
+    except Exception:
+        return ""
+
+
+def safe_relative_path(value):
+    rel = value.strip()
+    path = Path(rel)
+    if not rel or path.is_absolute() or ".." in path.parts:
+        raise ValueError(f"非法同步路径：{value}")
+    return path
+
+
+def parse_update_sync_paths():
+    paths = []
+    for raw_path in UPDATE_SYNC_PATHS.split(","):
+        raw_path = raw_path.strip()
+        if raw_path:
+            paths.append(safe_relative_path(raw_path))
+    return paths
+
+
+def read_version(path):
+    if not path.exists():
+        return ""
+    for line in path.read_text(encoding="utf-8").splitlines():
+        version = line.strip()
+        if version:
+            return version
+    return ""
+
+
+def local_version_file():
+    return VPN_DIR / safe_relative_path(UPDATE_VERSION_FILE)
+
+
+def get_update_branch():
+    if UPDATE_BRANCH:
+        return UPDATE_BRANCH
+    branch = optional_repo_git_command(["rev-parse", "--abbrev-ref", "HEAD"], timeout=8)
+    if branch and branch != "HEAD":
+        return branch
+    origin_head = optional_repo_git_command(["symbolic-ref", "refs/remotes/origin/HEAD"], timeout=8)
+    prefix = "refs/remotes/origin/"
+    if origin_head.startswith(prefix):
+        return origin_head[len(prefix):]
+    return "main"
+
+
+def ensure_update_repo():
+    if not UPDATE_REPO_DIR.exists():
+        if not UPDATE_REPO_URL:
+            raise RuntimeError(f"源码仓库目录不存在：{UPDATE_REPO_DIR}")
+        UPDATE_REPO_DIR.parent.mkdir(parents=True, exist_ok=True)
+        branch_args = ["--branch", UPDATE_BRANCH] if UPDATE_BRANCH else []
+        run_command(["git", "clone", *branch_args, UPDATE_REPO_URL, str(UPDATE_REPO_DIR)], timeout=600, cwd=UPDATE_REPO_DIR.parent)
+    if not (UPDATE_REPO_DIR / ".git").exists():
+        raise RuntimeError(f"源码仓库目录不是 Git 仓库：{UPDATE_REPO_DIR}")
+    if repo_git_command(["rev-parse", "--is-inside-work-tree"], timeout=8) != "true":
+        raise RuntimeError(f"源码仓库目录不是有效 Git 工作区：{UPDATE_REPO_DIR}")
+
+
+def write_update_state(**values):
+    normalized = {key: "" if value is None else str(value) for key, value in values.items()}
+    get_redis().hset(UPDATE_STATE_KEY, mapping=normalized)
+
+
+def check_remote_version():
+    ensure_update_repo()
+    branch = get_update_branch()
+    version_path = safe_relative_path(UPDATE_VERSION_FILE).as_posix()
+    repo_git_command(["fetch", "--quiet", "origin"], timeout=180)
+    remote_version_text = repo_git_command(["show", f"origin/{branch}:{version_path}"], timeout=30)
+    remote_version = remote_version_text.splitlines()[0].strip() if remote_version_text.splitlines() else ""
+    local_version = read_version(local_version_file())
+    return {
+        "local_version": local_version or "未安装版本",
+        "remote_version": remote_version,
+        "branch": branch,
+        "repo_dir": str(UPDATE_REPO_DIR),
+        "repo_url": UPDATE_REPO_URL,
+        "sync_paths": ", ".join(path.as_posix() for path in parse_update_sync_paths()),
+        "update_available": "1" if remote_version and remote_version != local_version else "0",
+        "checked_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "checked_epoch": str(int(time.time())),
+        "checking": "0",
+        "error": "",
+    }
+
+
+def check_update_background(lock_id):
+    with app.app_context():
+        try:
+            write_update_state(**check_remote_version())
+        except Exception as exc:
+            write_update_state(
+                local_version=read_version(local_version_file()) or "未安装版本",
+                remote_version="",
+                branch=UPDATE_BRANCH or "",
+                repo_dir=str(UPDATE_REPO_DIR),
+                repo_url=UPDATE_REPO_URL,
+                sync_paths=", ".join(path.as_posix() for path in parse_update_sync_paths()),
+                update_available="0",
+                checked_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                checked_epoch=str(int(time.time())),
+                checking="0",
+                error=str(exc),
+            )
+        finally:
+            release_operation_lock(lock_id, "version-check-lock")
+
+
+def maybe_start_update_check(force=False):
+    state = get_redis().hgetall(UPDATE_STATE_KEY)
+    checked_epoch = int(state.get("checked_epoch") or "0")
+    if not force and checked_epoch and time.time() - checked_epoch < UPDATE_CHECK_INTERVAL_SECONDS:
+        return False
+    lock_id = acquire_operation_lock("version-check-lock")
+    if not lock_id:
+        return False
+    get_redis().hset(UPDATE_STATE_KEY, mapping={"checking": "1"})
+    worker = threading.Thread(target=check_update_background, args=(lock_id,), daemon=True)
+    worker.start()
+    return True
+
+
+def get_version_info():
+    maybe_start_update_check()
+    state = get_redis().hgetall(UPDATE_STATE_KEY)
+    return {
+        "local_version": state.get("local_version") or read_version(local_version_file()) or "未安装版本",
+        "remote_version": state.get("remote_version") or "",
+        "branch": state.get("branch") or UPDATE_BRANCH or "main",
+        "repo_dir": state.get("repo_dir") or str(UPDATE_REPO_DIR),
+        "repo_url": state.get("repo_url") or UPDATE_REPO_URL,
+        "sync_paths": state.get("sync_paths") or ", ".join(path.as_posix() for path in parse_update_sync_paths()),
+        "checked_at": state.get("checked_at") or "尚未检查",
+        "checking": state.get("checking") == "1",
+        "update_available": state.get("update_available") == "1",
+        "error": state.get("error") or "",
+    }
 
 
 def restart_wireguard():
@@ -427,6 +588,13 @@ def restart_wireguard():
         return run_command(["docker", "compose", "up", "-d", "--force-recreate", "wireguard"], timeout=180)
     except FileNotFoundError:
         return run_command(["docker-compose", "up", "-d", "--force-recreate", "wireguard"], timeout=180)
+
+
+def rebuild_admin():
+    try:
+        return run_command(["docker", "compose", "up", "-d", "--build", "vpn-admin"], timeout=600)
+    except FileNotFoundError:
+        return run_command(["docker-compose", "up", "-d", "--build", "vpn-admin"], timeout=600)
 
 
 def wait_for_peer_files(peers, timeout=60):
@@ -473,6 +641,74 @@ def apply_settings_background(lock_id, actor_user_id, server_url, port, peers):
             release_operation_lock(lock_id)
 
 
+def copy_item(src, dst, backup_root):
+    if not src.exists():
+        raise RuntimeError(f"待同步文件不存在：{src}")
+    backup_dst = backup_root / dst.relative_to(VPN_DIR)
+    if dst.exists() or dst.is_symlink():
+        backup_dst.parent.mkdir(parents=True, exist_ok=True)
+        if dst.is_dir() and not dst.is_symlink():
+            shutil.copytree(dst, backup_dst, symlinks=True)
+            shutil.rmtree(dst)
+        else:
+            shutil.copy2(dst, backup_dst)
+            dst.unlink()
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if src.is_dir() and not src.is_symlink():
+        shutil.copytree(src, dst, symlinks=True)
+    else:
+        shutil.copy2(src, dst)
+
+
+def sync_update_files():
+    backup_root = VPN_DIR / "deploy" / "backups" / f"update-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    copied = []
+    for rel_path in parse_update_sync_paths():
+        src = UPDATE_REPO_DIR / rel_path
+        dst = VPN_DIR / rel_path
+        copy_item(src, dst, backup_root)
+        copied.append(rel_path.as_posix())
+    return copied, backup_root
+
+
+def version_update_background(lock_id, actor_user_id):
+    with app.app_context():
+        before = optional_repo_git_command(["rev-parse", "--short", "HEAD"], timeout=8) or "unknown"
+        try:
+            ensure_update_repo()
+            branch = get_update_branch()
+            repo_git_command(["fetch", "--quiet", "origin"], timeout=180)
+            if not optional_repo_git_command(["rev-parse", "--verify", branch], timeout=8):
+                repo_git_command(["checkout", "-b", branch, f"origin/{branch}"], timeout=120)
+            else:
+                repo_git_command(["checkout", branch], timeout=120)
+            pull_output = repo_git_command(["pull", "--ff-only", "origin", branch], timeout=300)
+            copied, backup_root = sync_update_files()
+            after = optional_repo_git_command(["rev-parse", "--short", "HEAD"], timeout=8) or "unknown"
+            rebuild_output = rebuild_admin()
+            write_update_state(**check_remote_version())
+            detail = (
+                f"{before} -> {after}; branch={branch}; "
+                f"{pull_output or 'already up to date'}; copied={','.join(copied)}; "
+                f"backup={backup_root}; {rebuild_output or 'admin rebuilt'}"
+            )
+            with get_db().cursor() as cur:
+                cur.execute(
+                    "INSERT INTO operation_logs (actor_user_id, action, detail, success) VALUES (%s, %s, %s, %s)",
+                    (actor_user_id, "version_update", detail[:1800], True),
+                )
+            get_db().commit()
+        except Exception as exc:
+            with get_db().cursor() as cur:
+                cur.execute(
+                    "INSERT INTO operation_logs (actor_user_id, action, detail, success) VALUES (%s, %s, %s, %s)",
+                    (actor_user_id, "version_update", str(exc)[:1800], False),
+                )
+            get_db().commit()
+        finally:
+            release_operation_lock(lock_id)
+
+
 def require_login():
     user_id = session.get("user_id")
     session_id = session.get("session_id")
@@ -504,6 +740,11 @@ def verify_csrf():
     token = request.form.get("csrf_token", "")
     if not hmac.compare_digest(token, session.get("csrf_token", "")):
         raise RuntimeError("CSRF 校验失败，请刷新页面后重试")
+
+
+def require_admin():
+    if getattr(g, "user", None) is None or g.user["role"] != "admin":
+        abort(403)
 
 
 @app.before_request
@@ -549,6 +790,7 @@ def logout():
 
 @app.route("/")
 def dashboard():
+    require_admin()
     runtime = read_runtime_config()
     settings = {
         "server_url": get_setting("server_url", runtime["server_url"]),
@@ -573,11 +815,13 @@ def dashboard():
         settings=settings,
         users=users,
         logs=logs,
+        version=get_version_info(),
     )
 
 
 @app.route("/settings/apply", methods=["POST"])
 def apply_settings():
+    require_admin()
     verify_csrf()
     try:
         server_url = request.form.get("server_url", "").strip()
@@ -605,6 +849,7 @@ def apply_settings():
 
 @app.route("/refresh", methods=["POST"])
 def refresh():
+    require_admin()
     verify_csrf()
     try:
         with operation_lock():
@@ -617,8 +862,48 @@ def refresh():
     return redirect(url_for("dashboard"))
 
 
+@app.route("/version/update", methods=["POST"])
+def update_version():
+    require_admin()
+    verify_csrf()
+    try:
+        version = get_version_info()
+        if not version["update_available"]:
+            raise RuntimeError("当前没有可更新版本，请先检查版本或等待定时检查完成")
+        lock_id = acquire_operation_lock()
+        if not lock_id:
+            raise RuntimeError("已有刷新、切换或更新任务正在执行，请稍后再试")
+        worker = threading.Thread(
+            target=version_update_background,
+            args=(lock_id, g.user["id"]),
+            daemon=True,
+        )
+        worker.start()
+        flash("版本更新任务已提交，后台会拉取源码、同步运行目录并重建后台容器。请约 30 秒后刷新页面。", "success")
+    except Exception as exc:
+        log_action("version_update_submit", str(exc), False)
+        flash(str(exc), "error")
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/version/check", methods=["POST"])
+def check_version():
+    require_admin()
+    verify_csrf()
+    try:
+        if maybe_start_update_check(force=True):
+            flash("版本检查已开始，请稍后刷新页面查看结果。", "success")
+        else:
+            flash("已有版本检查任务正在执行，请稍后刷新页面。", "success")
+    except Exception as exc:
+        log_action("version_check_submit", str(exc), False)
+        flash(str(exc), "error")
+    return redirect(url_for("dashboard"))
+
+
 @app.route("/users/create", methods=["POST"])
 def create_user():
+    require_admin()
     verify_csrf()
     try:
         username = request.form.get("username", "").strip()
@@ -628,6 +913,8 @@ def create_user():
             raise ValueError("用户名必须是 3-32 位字母、数字、点、下划线或横线")
         if len(password) < 8:
             raise ValueError("密码至少 8 位")
+        if role not in {"admin", "user"}:
+            raise ValueError("角色只能是 admin 或 user")
         token = generate_token()
         with get_db().cursor() as cur:
             cur.execute(
@@ -646,6 +933,7 @@ def create_user():
 
 @app.route("/users/<int:user_id>/toggle", methods=["POST"])
 def toggle_user(user_id):
+    require_admin()
     verify_csrf()
     if user_id == g.user["id"]:
         flash("不能禁用当前登录用户", "error")
@@ -659,6 +947,7 @@ def toggle_user(user_id):
 
 @app.route("/users/<int:user_id>/password", methods=["POST"])
 def reset_password(user_id):
+    require_admin()
     verify_csrf()
     password = request.form.get("password", "")
     if len(password) < 8:
@@ -674,6 +963,7 @@ def reset_password(user_id):
 
 @app.route("/users/<int:user_id>/token", methods=["POST"])
 def reset_token(user_id):
+    require_admin()
     verify_csrf()
     token = generate_token()
     old_user = query_one("SELECT username, sub_token_hash FROM users WHERE id = %s", (user_id,))

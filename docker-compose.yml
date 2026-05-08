@@ -45,6 +45,12 @@ services:
       - MALLOC_ARENA_MAX=${MALLOC_ARENA_MAX:-2}
       - PYTHONOPTIMIZE=${PYTHONOPTIMIZE:-2}
       - PYTHONDONTWRITEBYTECODE=${PYTHONDONTWRITEBYTECODE:-1}
+      - UPDATE_REPO_DIR=${UPDATE_REPO_DIR:-/app/vpn/wg-clash-admin}
+      - UPDATE_REPO_URL=${UPDATE_REPO_URL:-https://github.com/jqmzfj/wg-clash-admin.git}
+      - UPDATE_BRANCH=${UPDATE_BRANCH:-main}
+      - UPDATE_VERSION_FILE=${UPDATE_VERSION_FILE:-VERSION}
+      - UPDATE_CHECK_INTERVAL_SECONDS=${UPDATE_CHECK_INTERVAL_SECONDS:-18000}
+      - UPDATE_SYNC_PATHS=${UPDATE_SYNC_PATHS:-admin,run.sh,generate_clash_yaml.py,docker-compose.yml,README.md,.env.example,VERSION}
     volumes:
       - .:${VPN_DIR:-/app/vpn}
       - /var/run/docker.sock:/var/run/docker.sock

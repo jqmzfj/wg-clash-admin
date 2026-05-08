@@ -1,6 +1,6 @@
 FROM python:3.12-alpine
 
-RUN apk add --no-cache bash docker-cli docker-cli-compose
+RUN apk add --no-cache bash ca-certificates docker-cli docker-cli-compose git
 
 WORKDIR /app/vpn/admin
 

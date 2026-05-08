@@ -9,6 +9,9 @@
 - 重置用户密码
 - 重置订阅 token，旧 token 立即失效
 - 一键复制每个用户的订阅链接
+- 每 5 小时检测 GitHub 是否发布新版本
+- 发现新版本后提示管理员确认更新
+- 从源码仓库同步白名单文件到运行目录并重建后台容器
 - 修改 WireGuard 公网地址 `SERVERURL`
 - 修改 WireGuard 外网 UDP 端口 `SERVERPORT`
 - 修改 WireGuard 客户端数量 `PEERS`
@@ -23,8 +26,10 @@
 ├── docker-compose.yml     # WireGuard 和后台服务编排
 ├── generate_clash_yaml.py # 从 WireGuard peer 配置生成 Clash 配置
 ├── run.sh                 # 刷新 Clash 配置的脚本
+├── VERSION                # 当前运行版本号
 ├── .env.example           # 环境变量示例，复制为 .env 后使用
 ├── .gitignore             # 排除运行态和敏感文件
+├── wg-clash-admin/        # 推荐保留的源码仓库目录，用于在线更新
 └── vpn-config/            # WireGuard 运行生成的配置目录，不应提交
 ```
 
@@ -223,6 +228,67 @@ Python 优化等级。默认 `2`，会去掉 assert 和部分调试信息。
 
 是否禁止写 `.pyc` 文件。默认 `1`，减少运行态文件。
 
+### 版本检测与在线更新
+
+`UPDATE_REPO_DIR`
+
+源码仓库目录。推荐结构是在运行目录下保留一份 Git 克隆：
+
+```text
+/home/wzh/vpn/wg-clash-admin
+```
+
+容器内对应默认值：
+
+```text
+/app/vpn/wg-clash-admin
+```
+
+后台不会直接从这个目录运行服务。它只把这个目录当作“源码仓库”，用于检查版本、拉取新代码，并把白名单文件同步覆盖到运行目录。
+
+`UPDATE_REPO_URL`
+
+开源源码仓库地址。默认：
+
+```text
+https://github.com/jqmzfj/wg-clash-admin.git
+```
+
+如果 `UPDATE_REPO_DIR` 指向的目录不存在，后台检查版本时会尝试自动 clone 这个仓库。
+
+`UPDATE_BRANCH`
+
+用于检测和更新的 Git 分支。默认 `main`。如果你的 GitHub 仓库使用 `master` 或其他分支，请改成对应分支名。
+
+`UPDATE_VERSION_FILE`
+
+版本号文件名。默认 `VERSION`。运行目录和源码仓库里都应该有这个文件，文件内容只写版本号，例如：
+
+```text
+0.1.0
+```
+
+`UPDATE_CHECK_INTERVAL_SECONDS`
+
+自动检测 GitHub 新版本的间隔，单位秒。默认 `18000`，也就是 5 小时。
+
+`UPDATE_SYNC_PATHS`
+
+点击更新时，从源码仓库同步覆盖到运行目录的白名单路径。默认：
+
+```text
+admin,run.sh,generate_clash_yaml.py,docker-compose.yml,README.md,.env.example,VERSION
+```
+
+不要把这些路径加入白名单：
+
+- `.env`
+- `vpn-config`
+- `clash-config.yaml`
+- `run.log`
+
+这些都是运行数据或敏感配置，不应该被线上更新覆盖。
+
 ### Docker 容器命名与网络
 
 `WIREGUARD_CONTAINER_NAME`
@@ -278,7 +344,68 @@ WireGuard 客户端数量。后台页面也可以修改此值。
 
 WireGuard 内部网段。已有配置生成后不建议随意修改，否则可能影响已有客户端。
 
-## 第四步：启动服务
+## 第四步：推荐部署结构
+
+推荐把“运行目录”和“源码仓库目录”分开。以 `/home/wzh/vpn` 为例：
+
+```text
+/home/wzh/vpn
+├── admin
+├── docker-compose.yml
+├── generate_clash_yaml.py
+├── run.sh
+├── VERSION
+├── .env
+├── wg-clash-admin
+│   ├── admin
+│   ├── docker-compose.yml
+│   ├── generate_clash_yaml.py
+│   ├── README.md
+│   ├── run.sh
+│   └── VERSION
+├── vpn-config
+├── clash-config.yaml
+└── run.log
+```
+
+`/home/wzh/vpn` 是真正运行 Docker Compose 的目录。
+
+`/home/wzh/vpn/wg-clash-admin` 是 GitHub 拉下来的源码仓库，在线更新时会先更新这里，再把 `UPDATE_SYNC_PATHS` 中配置的文件覆盖到运行目录。
+
+## 第五步：快捷部署命令
+
+```bash
+mkdir -p /home/wzh/vpn
+cd /home/wzh/vpn
+git clone https://github.com/jqmzfj/wg-clash-admin.git wg-clash-admin
+cp wg-clash-admin/.env.example .env
+cp -a wg-clash-admin/admin ./admin
+cp wg-clash-admin/docker-compose.yml ./docker-compose.yml
+cp wg-clash-admin/generate_clash_yaml.py ./generate_clash_yaml.py
+cp wg-clash-admin/run.sh ./run.sh
+cp wg-clash-admin/VERSION ./VERSION
+chmod +x ./run.sh
+vim .env
+docker compose up -d --build
+```
+
+如果你已经有运行目录，只需要确认源码仓库存在：
+
+```bash
+cd /home/wzh/vpn
+git clone https://github.com/jqmzfj/wg-clash-admin.git wg-clash-admin
+```
+
+然后在 `.env` 中确认：
+
+```text
+UPDATE_REPO_DIR=/app/vpn/wg-clash-admin
+UPDATE_REPO_URL=https://github.com/jqmzfj/wg-clash-admin.git
+UPDATE_BRANCH=main
+UPDATE_VERSION_FILE=VERSION
+```
+
+## 第六步：启动服务
 
 执行：
 
@@ -294,7 +421,7 @@ docker logs vpn-admin
 
 首次启动会自动建表，并创建初始管理员。日志中会打印初始订阅 token。
 
-## 第五步：访问后台
+## 第七步：访问后台
 
 默认后台地址：
 
@@ -304,7 +431,7 @@ http://服务器IP:19090/sub/clash
 
 如果你修改了 `PORT` 或 `URL_PREFIX`，请按实际配置访问。
 
-## 第六步：使用后台
+## 第八步：使用后台
 
 ### 登录
 
@@ -368,6 +495,46 @@ https://你的域名/sub/clash/file/clash.yaml?token=用户token
 http://服务器IP:19090/sub/clash/file/clash.yaml?token=用户token
 ```
 
+### 版本更新
+
+后台会每 5 小时检查一次源码仓库对应 GitHub 分支中的 `VERSION` 文件。
+
+如果 GitHub 上的版本号和运行目录的 `VERSION` 不一致，左上角会提示“发现新版本”。管理员确认更新后，后台会异步执行：
+
+```bash
+cd /app/vpn/wg-clash-admin
+git pull --ff-only origin main
+cp /app/vpn/wg-clash-admin/白名单路径 /app/vpn/对应路径
+docker compose up -d --build vpn-admin
+```
+
+实际同步的路径由 `UPDATE_SYNC_PATHS` 控制。默认会同步：
+
+- `admin`
+- `run.sh`
+- `generate_clash_yaml.py`
+- `docker-compose.yml`
+- `README.md`
+- `.env.example`
+- `VERSION`
+
+更新前后台会把被覆盖的旧文件备份到：
+
+```text
+deploy/backups/update-时间戳/
+```
+
+使用前请确认：
+
+- `UPDATE_REPO_DIR` 指向源码仓库目录，例如 `/app/vpn/wg-clash-admin`
+- `UPDATE_REPO_URL` 是 `https://github.com/jqmzfj/wg-clash-admin.git`
+- 源码仓库配置了 `origin` 远程仓库
+- 本地没有会阻止快进更新的未提交改动
+- `vpn-admin` 已挂载 `/var/run/docker.sock`
+- 后台登录账号是 `admin` 角色
+
+更新任务提交后页面会立即返回。请等待约 30 秒后刷新页面；如果更新失败，可以在“最近操作”里查看错误原因。
+
 ## OpenResty / Nginx 反向代理
 
 推荐使用独立域名或路径前缀代理后台。
@@ -409,6 +576,10 @@ docker exec -it openresty sh -c "ip route | awk '/default/ {print \$3}'"
 - 不要把 PostgreSQL 和 Redis 对公网全开放
 - 后台建议只对可信网络开放，或在 OpenResty / Nginx 前加 IP 白名单、HTTPS、Basic Auth
 - `/var/run/docker.sock` 挂载给后台后，后台具备操作 Docker 的能力，请保护好后台登录账号
+
+## 开源协议
+
+本项目使用 MIT License 开源，允许个人和商业场景自由使用、修改和分发。详情见仓库中的 `LICENSE` 文件。
 
 ## 常见问题
 
