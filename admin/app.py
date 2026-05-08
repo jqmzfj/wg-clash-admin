@@ -847,6 +847,9 @@ def logout():
 @app.route("/")
 def dashboard():
     require_admin()
+    log_page = max(1, int(request.args.get("log_page", "1") or "1"))
+    log_per_page = 8
+    log_offset = (log_page - 1) * log_per_page
     runtime = read_runtime_config()
     settings = {
         "server_url": get_setting("server_url", runtime["server_url"]),
@@ -856,14 +859,21 @@ def dashboard():
     users = query_all("SELECT id, username, role, is_active, sub_token, created_at, updated_at FROM users ORDER BY id")
     for user in users:
         user["subscription_url"] = url_for("subscription", token=user["sub_token"], _external=True) if user.get("sub_token") else ""
+    log_total_row = query_one("SELECT COUNT(*) AS total FROM operation_logs")
+    log_total = log_total_row["total"] if log_total_row else 0
+    log_total_pages = max(1, (log_total + log_per_page - 1) // log_per_page)
+    if log_page > log_total_pages:
+        log_page = log_total_pages
+        log_offset = (log_page - 1) * log_per_page
     logs = query_all(
         """
         SELECT l.*, u.username
         FROM operation_logs l
         LEFT JOIN users u ON u.id = l.actor_user_id
         ORDER BY l.created_at DESC
-        LIMIT 12
-        """
+        LIMIT %s OFFSET %s
+        """,
+        (log_per_page, log_offset),
     )
     return render_template(
         "dashboard.html",
@@ -871,6 +881,9 @@ def dashboard():
         settings=settings,
         users=users,
         logs=logs,
+        log_page=log_page,
+        log_total_pages=log_total_pages,
+        log_total=log_total,
         version=get_version_info(),
         app_started_at=APP_STARTED_AT,
         asset_version=read_version(local_version_file()) or str(APP_STARTED_AT),

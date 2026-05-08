@@ -230,16 +230,44 @@
             <p class="eyebrow">AUDIT</p>
             <h2>最近操作</h2>
           </div>
+          <div class="log-count">共 {{ log_total }} 条</div>
         </div>
         <div class="log-list">
           {% for log in logs %}
           <div class="log-row">
-            <span class="pill {{ 'ok' if log.success else 'off' }}">{{ '成功' if log.success else '失败' }}</span>
-            <strong>{{ log.action }}</strong>
-            <span>{{ log.detail }}</span>
+            <div class="log-status">
+              <span class="pill {{ 'ok' if log.success else 'off' }}">{{ '成功' if log.success else '失败' }}</span>
+            </div>
+            <div class="log-main">
+              <div class="log-title-line">
+                <strong>{{ log.action }}</strong>
+                <span>{{ log.username or 'system' }}</span>
+              </div>
+              {% if log.detail %}
+                <details class="log-detail">
+                  <summary>{{ log.detail }}</summary>
+                  <pre>{{ log.detail }}</pre>
+                </details>
+              {% else %}
+                <span class="muted">无详情</span>
+              {% endif %}
+            </div>
             <time>{{ log.created_at.strftime('%Y-%m-%d %H:%M:%S') if log.created_at else '' }}</time>
           </div>
           {% endfor %}
+        </div>
+        <div class="pager">
+          {% if log_page > 1 %}
+            <a href="{{ url_for('dashboard', log_page=log_page - 1) }}#logs">上一页</a>
+          {% else %}
+            <span>上一页</span>
+          {% endif %}
+          <strong>{{ log_page }} / {{ log_total_pages }}</strong>
+          {% if log_page < log_total_pages %}
+            <a href="{{ url_for('dashboard', log_page=log_page + 1) }}#logs">下一页</a>
+          {% else %}
+            <span>下一页</span>
+          {% endif %}
         </div>
       </section>
     </main>

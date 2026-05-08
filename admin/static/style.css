@@ -857,22 +857,112 @@ tbody tr:hover {
 
 .log-list {
   display: grid;
-  gap: 10px;
+  gap: 12px;
+  margin-top: 18px;
 }
 
 .log-row {
   display: grid;
-  grid-template-columns: 64px 150px minmax(0, 1fr) 170px;
-  gap: 12px;
-  align-items: center;
-  padding: 12px;
+  grid-template-columns: 90px minmax(0, 1fr) 170px;
+  gap: 16px;
+  align-items: start;
+  padding: 16px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.54);
+  background:
+    linear-gradient(90deg, rgba(91, 216, 255, 0.07), transparent 34%),
+    rgba(255, 255, 255, 0.6);
 }
 
-.log-row span:nth-child(3) {
+.log-main {
+  min-width: 0;
+}
+
+.log-title-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.log-title-line strong {
+  font-size: 16px;
+}
+
+.log-title-line span,
+.log-count {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.log-detail {
+  margin-top: 8px;
+}
+
+.log-detail summary {
+  max-width: 100%;
+  color: #2f3545;
+  line-height: 1.55;
+  cursor: pointer;
   overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.log-detail[open] summary {
+  display: block;
+}
+
+.log-detail pre {
+  max-height: 220px;
+  margin: 10px 0 0;
+  overflow: auto;
+  border: 1px solid rgba(78, 124, 255, 0.12);
+  border-radius: 8px;
+  padding: 12px;
+  color: #283044;
+  background: rgba(255, 255, 255, 0.72);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.pager {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.pager a,
+.pager span,
+.pager strong {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 8px;
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.pager a {
+  color: #101320;
+  background: linear-gradient(135deg, rgba(113, 230, 191, 0.72), rgba(91, 216, 255, 0.52));
+}
+
+.pager span {
+  color: rgba(105, 112, 131, 0.7);
+  background: rgba(255, 255, 255, 0.52);
+}
+
+.pager strong {
+  color: var(--blue);
+  background: rgba(78, 124, 255, 0.08);
 }
 
 time {
@@ -900,8 +990,15 @@ time {
   .metrics-grid,
   .two-col,
   .user-create,
-  .log-row {
+  .log-row,
+  .log-title-line,
+  .pager {
     grid-template-columns: 1fr;
+  }
+
+  .log-title-line,
+  .pager {
+    align-items: flex-start;
   }
 
   .hero-strip {
