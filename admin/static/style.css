@@ -599,6 +599,95 @@ select:focus {
   opacity: 1;
 }
 
+.update-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    linear-gradient(135deg, rgba(17, 19, 28, 0.72), rgba(78, 124, 255, 0.38)),
+    rgba(17, 19, 28, 0.46);
+  backdrop-filter: blur(16px) saturate(1.15);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease;
+}
+
+.update-overlay.show {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.update-card {
+  width: min(430px, 100%);
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.52);
+  border-radius: 8px;
+  padding: 34px;
+  color: #ffffff;
+  background:
+    linear-gradient(135deg, rgba(255, 138, 200, 0.2), transparent 42%),
+    linear-gradient(315deg, rgba(91, 216, 255, 0.26), transparent 48%),
+    rgba(23, 32, 51, 0.92);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.24), 6px 6px 0 rgba(216, 255, 122, 0.34);
+}
+
+.update-card::after {
+  content: "";
+  position: absolute;
+  right: 28px;
+  top: 28px;
+  width: 86px;
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--lime), var(--mint), var(--cyan));
+}
+
+.update-card .eyebrow {
+  margin-top: 22px;
+  color: var(--lime);
+}
+
+.update-card h2 {
+  font-size: 34px;
+}
+
+.update-card p:not(.eyebrow) {
+  margin: 16px 0 0;
+  color: rgba(255, 255, 255, 0.78);
+  line-height: 1.7;
+}
+
+.update-card span {
+  display: inline-flex;
+  margin-top: 18px;
+  border-radius: 999px;
+  padding: 8px 12px;
+  color: #101320;
+  background: linear-gradient(135deg, var(--lime), var(--mint));
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.update-loader {
+  width: 48px;
+  height: 48px;
+  border: 5px solid rgba(255, 255, 255, 0.2);
+  border-top-color: var(--lime);
+  border-right-color: var(--cyan);
+  border-radius: 50%;
+  animation: update-spin 900ms linear infinite;
+}
+
+@keyframes update-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .user-create {
   grid-template-columns: 1fr 1.3fr 140px 140px;
   margin: 20px 0;

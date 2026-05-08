@@ -21,6 +21,7 @@ from flask import (
     abort,
     flash,
     g,
+    jsonify,
     redirect,
     render_template,
     request,
@@ -52,6 +53,7 @@ UPDATE_STATE_KEY = "version:update_state"
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 14
 LOCK_TTL_SECONDS = 180
 RESERVED_PORTS = {22, 25, 53, 80, 110, 143, 443, 465, 587, 993, 995, 2375, 2376, 5432, 6379}
+APP_STARTED_AT = int(time.time())
 
 
 app = Flask(__name__)
@@ -870,6 +872,7 @@ def dashboard():
         users=users,
         logs=logs,
         version=get_version_info(),
+        app_started_at=APP_STARTED_AT,
     )
 
 
@@ -953,6 +956,17 @@ def check_version():
         log_action("version_check_submit", str(exc), False)
         flash(str(exc), "error")
     return redirect(url_for("dashboard"))
+
+
+@app.route("/version/ping")
+def version_ping():
+    require_admin()
+    return jsonify(
+        {
+            "started_at": APP_STARTED_AT,
+            "local_version": read_version(local_version_file()) or "未安装版本",
+        }
+    )
 
 
 @app.route("/users/create", methods=["POST"])
