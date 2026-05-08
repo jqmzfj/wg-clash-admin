@@ -204,6 +204,16 @@ URL_PREFIX=
 - `simple`：单进程 Flask 服务，内存占用低，适合个人使用。
 - `gunicorn`：使用 gunicorn，适合多人使用或更高并发。
 
+`ADMIN_UPDATER_IMAGE`
+
+自更新时临时 updater 容器使用的镜像。默认留空，后台会自动识别当前 `vpn-admin` 容器正在使用的镜像。
+
+只有自动识别失败时才需要手动填写，例如：
+
+```text
+ADMIN_UPDATER_IMAGE=vpn-vpn-admin:latest
+```
+
 `GUNICORN_WORKERS`
 
 `ADMIN_SERVER=gunicorn` 时生效，表示 worker 数量。
@@ -520,6 +530,12 @@ cd /app/vpn/wg-clash-admin
 git pull --ff-only origin main
 cp /app/vpn/wg-clash-admin/白名单路径 /app/vpn/对应路径
 docker compose up -d --build vpn-admin
+```
+
+重建命令由临时容器 `vpn-admin-updater` 执行，避免 `vpn-admin` 在重建自己时把更新流程中断。执行日志会写入：
+
+```text
+deploy/update-rebuild.log
 ```
 
 实际同步的路径由 `UPDATE_SYNC_PATHS` 控制。默认会同步：

@@ -594,11 +594,34 @@ def restart_wireguard():
         return run_command(["docker-compose", "up", "-d", "--force-recreate", "wireguard"], timeout=180)
 
 
+def current_admin_image():
+    configured_image = os.environ.get("ADMIN_UPDATER_IMAGE", "").strip()
+    if configured_image:
+        return configured_image
+    candidates = [
+        os.environ.get("HOSTNAME", "").strip(),
+        os.environ.get("ADMIN_CONTAINER_NAME", "vpn-admin").strip(),
+        "vpn-admin",
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            image = run_command(["docker", "inspect", candidate, "--format", "{{.Config.Image}}"], timeout=30)
+            if image:
+                return image
+        except Exception:
+            pass
+    return "vpn-vpn-admin:latest"
+
+
 def rebuild_admin():
     script = (
         "set -eu; "
+        "mkdir -p /work/deploy; "
         "cd /work; "
-        "docker compose up -d --build vpn-admin"
+        "sleep 2; "
+        "docker compose up -d --build vpn-admin > /work/deploy/update-rebuild.log 2>&1"
     )
     try:
         run_command(["docker", "rm", "-f", "vpn-admin-updater"], timeout=30)
@@ -618,8 +641,9 @@ def rebuild_admin():
             "/var/run/docker.sock:/var/run/docker.sock",
             "-w",
             "/work",
-            "docker:27-cli",
+            "--entrypoint",
             "sh",
+            current_admin_image(),
             "-c",
             script,
         ],
