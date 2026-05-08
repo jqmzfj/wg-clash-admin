@@ -873,6 +873,7 @@ def dashboard():
         logs=logs,
         version=get_version_info(),
         app_started_at=APP_STARTED_AT,
+        asset_version=read_version(local_version_file()) or str(APP_STARTED_AT),
     )
 
 
