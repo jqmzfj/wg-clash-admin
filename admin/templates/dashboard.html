@@ -235,24 +235,25 @@
         <div class="log-list">
           {% for log in logs %}
           <div class="log-row">
-            <div class="log-status">
+            <div class="log-head">
               <span class="pill {{ 'ok' if log.success else 'off' }}">{{ '成功' if log.success else '失败' }}</span>
-            </div>
-            <div class="log-main">
               <div class="log-title-line">
                 <strong>{{ log.action }}</strong>
                 <span>{{ log.username or 'system' }}</span>
               </div>
-              {% if log.detail %}
-                <details class="log-detail">
-                  <summary>{{ log.detail }}</summary>
-                  <pre>{{ log.detail }}</pre>
-                </details>
-              {% else %}
-                <span class="muted">无详情</span>
-              {% endif %}
+              <time>{{ log.created_at.strftime('%Y-%m-%d %H:%M:%S') if log.created_at else '' }}</time>
             </div>
-            <time>{{ log.created_at.strftime('%Y-%m-%d %H:%M:%S') if log.created_at else '' }}</time>
+            {% if log.detail %}
+              <details class="log-detail">
+                <summary>
+                  <span class="summary-label">详情</span>
+                  <span class="summary-text">{{ log.detail }}</span>
+                </summary>
+                <pre>{{ log.detail }}</pre>
+              </details>
+            {% else %}
+              <p class="log-empty">无详情</p>
+            {% endif %}
           </div>
           {% endfor %}
         </div>
