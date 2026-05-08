@@ -937,7 +937,11 @@ def update_version():
             daemon=True,
         )
         worker.start()
-        flash("版本更新任务已提交，后台会拉取源码、同步运行目录并重建后台容器。请约 30 秒后刷新页面。", "success")
+        return render_template(
+            "updating.html",
+            target_version=version["remote_version"],
+            asset_version=read_version(local_version_file()) or str(APP_STARTED_AT),
+        )
     except Exception as exc:
         log_action("version_update_submit", str(exc), False)
         flash(str(exc), "error")

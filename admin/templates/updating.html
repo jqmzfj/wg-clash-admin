@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>正在更新 - VPN Control Console</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=asset_version) }}">
+</head>
+<body class="updating-body">
+  <div class="update-overlay show" id="update-overlay">
+    <div class="update-card">
+      <div class="update-loader" aria-hidden="true"></div>
+      <p class="eyebrow">UPDATING</p>
+      <h2>正在更新后台</h2>
+      <p id="update-overlay-text">正在更新到 {{ target_version }}，完成后页面会自动刷新。</p>
+      <button class="overlay-refresh" type="button" onclick="window.location.href='{{ url_for('dashboard') }}'">立即刷新</button>
+      <span>请保持此页面打开</span>
+    </div>
+  </div>
+  <script>
+    const targetVersion = "{{ target_version }}";
+    const text = document.getElementById("update-overlay-text");
+    const deadline = Date.now() + 180000;
+
+    async function probe() {
+      try {
+        const response = await fetch(`{{ url_for('version_ping') }}?t=${Date.now()}`, {
+          cache: "no-store",
+          credentials: "same-origin",
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (String(data.local_version || "").trim() === targetVersion) {
+            window.location.href = "{{ url_for('dashboard') }}";
+            return;
+          }
+        }
+      } catch (error) {
+        // The container may be restarting; keep polling quietly.
+      }
+
+      if (Date.now() < deadline) {
+        window.setTimeout(probe, 3000);
+      } else {
+        text.textContent = "更新可能仍在进行，请稍后手动刷新页面。";
+      }
+    }
+
+    window.setTimeout(probe, 5000);
+  </script>
+</body>
+</html>

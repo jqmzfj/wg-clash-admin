@@ -118,9 +118,9 @@
                 <button class="ghost-btn" type="submit">立即检查</button>
               </form>
               {% if version.update_available %}
-                <form method="post" action="{{ url_for('update_version') }}" data-update-form data-target-version="{{ version.remote_version }}">
+                <form method="post" action="{{ url_for('update_version') }}">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                  <button class="update-btn" type="submit">更新新版本</button>
+                  <button class="update-btn" type="submit" onclick="return window.confirm('确认更新到 {{ version.remote_version }}？更新期间后台容器会重建。')">更新新版本</button>
                 </form>
               {% endif %}
             </div>
@@ -245,16 +245,6 @@
     </main>
   </div>
   <div class="toast" id="copy-toast">已复制</div>
-  <div class="update-overlay" id="update-overlay" data-started-at="{{ app_started_at }}">
-    <div class="update-card">
-      <div class="update-loader" aria-hidden="true"></div>
-      <p class="eyebrow">UPDATING</p>
-      <h2>正在更新后台</h2>
-      <p id="update-overlay-text">正在拉取新版本并重建容器，完成后页面会自动刷新。</p>
-      <button class="overlay-refresh" type="button" onclick="window.location.reload()">立即刷新</button>
-      <span>请保持此页面打开</span>
-    </div>
-  </div>
   <script>
     function copyText(text) {
       if (navigator.clipboard && window.isSecureContext) {
@@ -280,67 +270,6 @@
         const toast = document.getElementById("copy-toast");
         toast.classList.add("show");
         window.setTimeout(() => toast.classList.remove("show"), 1400);
-      });
-    });
-
-    const updateOverlay = document.getElementById("update-overlay");
-    const updateOverlayText = document.getElementById("update-overlay-text");
-
-    function showUpdateOverlay(targetVersion) {
-      updateOverlay.classList.add("show");
-      updateOverlayText.textContent = `正在更新到 ${targetVersion}，完成后页面会自动刷新。`;
-    }
-
-    async function waitForUpdatedService(targetVersion) {
-      const deadline = Date.now() + 180000;
-      await new Promise((resolve) => window.setTimeout(resolve, 8000));
-
-      async function probe() {
-        try {
-          const response = await fetch(`{{ url_for('version_ping') }}?t=${Date.now()}`, {
-            cache: "no-store",
-            credentials: "same-origin",
-          });
-          if (response.ok) {
-            const data = await response.json();
-            if (String(data.local_version || "").trim() === targetVersion) {
-              window.location.reload();
-              return;
-            }
-          }
-        } catch (error) {
-          // The container may be restarting; keep polling quietly.
-        }
-        if (Date.now() < deadline) {
-          window.setTimeout(probe, 3000);
-        } else {
-          updateOverlayText.textContent = "更新可能仍在进行，请稍后手动刷新页面。";
-        }
-      }
-
-      probe();
-    }
-
-    document.querySelectorAll("[data-update-form]").forEach((form) => {
-      form.addEventListener("submit", async (event) => {
-        event.preventDefault();
-        const targetVersion = form.dataset.targetVersion || "新版本";
-        if (!window.confirm(`确认更新到 ${targetVersion}？更新期间后台容器会重建。`)) {
-          return;
-        }
-        showUpdateOverlay(targetVersion);
-        const button = form.querySelector("button");
-        if (button) button.disabled = true;
-        try {
-          await fetch(form.action, {
-            method: "POST",
-            body: new FormData(form),
-            credentials: "same-origin",
-          });
-        } catch (error) {
-          // The request can be interrupted when the container restarts.
-        }
-        waitForUpdatedService(targetVersion);
       });
     });
 
