@@ -50,7 +50,8 @@ services:
       - UPDATE_BRANCH=${UPDATE_BRANCH:-main}
       - UPDATE_VERSION_FILE=${UPDATE_VERSION_FILE:-VERSION}
       - UPDATE_CHECK_INTERVAL_SECONDS=${UPDATE_CHECK_INTERVAL_SECONDS:-18000}
-      - UPDATE_SYNC_PATHS=${UPDATE_SYNC_PATHS:-admin,run.sh,generate_clash_yaml.py,docker-compose.yml,README.md,.env.example,VERSION}
+      - UPDATE_SYNC_COMPOSE=${UPDATE_SYNC_COMPOSE:-false}
+      - UPDATE_SYNC_PATHS=${UPDATE_SYNC_PATHS:-admin,run.sh,generate_clash_yaml.py,README.md,.env.example,VERSION}
     volumes:
       - .:${VPN_DIR:-/app/vpn}
       - /var/run/docker.sock:/var/run/docker.sock

@@ -272,12 +272,25 @@ https://github.com/jqmzfj/wg-clash-admin.git
 
 自动检测 GitHub 新版本的间隔，单位秒。默认 `18000`，也就是 5 小时。
 
+`UPDATE_SYNC_COMPOSE`
+
+是否在在线更新时同步覆盖运行目录中的 `docker-compose.yml`。默认：
+
+```text
+false
+```
+
+- `false`：安全模式，不自动覆盖服务器本机 compose 配置。
+- `true`：同步 compose 模板，适合你确认新版本必须更新 compose 时使用。覆盖前会自动备份到 `deploy/backups/`。
+
+如果你的服务器已经有自定义容器名、网络模式、端口、1Panel / OpenResty 相关配置，建议保持 `false`，需要更新 compose 时先对比后手动合并。
+
 `UPDATE_SYNC_PATHS`
 
 点击更新时，从源码仓库同步覆盖到运行目录的白名单路径。默认：
 
 ```text
-admin,run.sh,generate_clash_yaml.py,docker-compose.yml,README.md,.env.example,VERSION
+admin,run.sh,generate_clash_yaml.py,README.md,.env.example,VERSION
 ```
 
 不要把这些路径加入白名单：
@@ -403,6 +416,7 @@ UPDATE_REPO_DIR=/app/vpn/wg-clash-admin
 UPDATE_REPO_URL=https://github.com/jqmzfj/wg-clash-admin.git
 UPDATE_BRANCH=main
 UPDATE_VERSION_FILE=VERSION
+UPDATE_SYNC_COMPOSE=false
 ```
 
 ## 第六步：启动服务
@@ -513,10 +527,23 @@ docker compose up -d --build vpn-admin
 - `admin`
 - `run.sh`
 - `generate_clash_yaml.py`
-- `docker-compose.yml`
 - `README.md`
 - `.env.example`
 - `VERSION`
+
+`docker-compose.yml` 属于服务器本机部署配置，默认不会被在线更新覆盖，避免把容器名、网络模式、端口映射等运行配置冲掉。需要更新 compose 模板时，请先对比后手动合并。
+
+如果你确认新版本必须同步 compose，可以在 `.env` 中临时设置：
+
+```text
+UPDATE_SYNC_COMPOSE=true
+```
+
+更新完成并确认正常后，建议再改回：
+
+```text
+UPDATE_SYNC_COMPOSE=false
+```
 
 更新前后台会把被覆盖的旧文件备份到：
 

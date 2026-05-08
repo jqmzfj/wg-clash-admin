@@ -43,9 +43,10 @@ UPDATE_REPO_URL = os.environ.get("UPDATE_REPO_URL", "https://github.com/jqmzfj/w
 UPDATE_BRANCH = os.environ.get("UPDATE_BRANCH", "").strip()
 UPDATE_VERSION_FILE = os.environ.get("UPDATE_VERSION_FILE", "VERSION").strip() or "VERSION"
 UPDATE_CHECK_INTERVAL_SECONDS = int(os.environ.get("UPDATE_CHECK_INTERVAL_SECONDS", "18000"))
+UPDATE_SYNC_COMPOSE = os.environ.get("UPDATE_SYNC_COMPOSE", "false").lower() == "true"
 UPDATE_SYNC_PATHS = os.environ.get(
     "UPDATE_SYNC_PATHS",
-    "admin,run.sh,generate_clash_yaml.py,docker-compose.yml,README.md,.env.example,VERSION",
+    "admin,run.sh,generate_clash_yaml.py,README.md,.env.example,VERSION",
 )
 UPDATE_STATE_KEY = "version:update_state"
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 14
@@ -459,6 +460,9 @@ def parse_update_sync_paths():
         raw_path = raw_path.strip()
         if raw_path:
             paths.append(safe_relative_path(raw_path))
+    compose_path = Path("docker-compose.yml")
+    if UPDATE_SYNC_COMPOSE and compose_path not in paths:
+        paths.append(compose_path)
     return paths
 
 
