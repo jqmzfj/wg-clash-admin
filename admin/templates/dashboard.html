@@ -251,6 +251,7 @@
       <p class="eyebrow">UPDATING</p>
       <h2>正在更新后台</h2>
       <p id="update-overlay-text">正在拉取新版本并重建容器，完成后页面会自动刷新。</p>
+      <button class="overlay-refresh" type="button" onclick="window.location.reload()">立即刷新</button>
       <span>请保持此页面打开</span>
     </div>
   </div>
@@ -291,7 +292,6 @@
     }
 
     async function waitForUpdatedService(targetVersion) {
-      const startedAt = updateOverlay.dataset.startedAt;
       const deadline = Date.now() + 180000;
       await new Promise((resolve) => window.setTimeout(resolve, 8000));
 
@@ -303,7 +303,7 @@
           });
           if (response.ok) {
             const data = await response.json();
-            if (String(data.started_at) !== String(startedAt) && data.local_version === targetVersion) {
+            if (String(data.local_version || "").trim() === targetVersion) {
               window.location.reload();
               return;
             }

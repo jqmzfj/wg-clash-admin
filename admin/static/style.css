@@ -672,6 +672,22 @@ select:focus {
   font-weight: 900;
 }
 
+.overlay-refresh {
+  min-height: 38px;
+  margin-top: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  border-radius: 8px;
+  padding: 0 14px;
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.12);
+  font-weight: 900;
+}
+
+.overlay-refresh:hover {
+  filter: saturate(1.08);
+  transform: translateY(-1px);
+}
+
 .update-loader {
   width: 48px;
   height: 48px;
