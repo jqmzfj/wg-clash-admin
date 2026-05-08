@@ -595,10 +595,36 @@ def restart_wireguard():
 
 
 def rebuild_admin():
+    script = (
+        "set -eu; "
+        "cd /work; "
+        "docker compose up -d --build vpn-admin"
+    )
     try:
-        return run_command(["docker", "compose", "up", "-d", "--build", "vpn-admin"], timeout=600)
-    except FileNotFoundError:
-        return run_command(["docker-compose", "up", "-d", "--build", "vpn-admin"], timeout=600)
+        run_command(["docker", "rm", "-f", "vpn-admin-updater"], timeout=30)
+    except Exception:
+        pass
+    return run_command(
+        [
+            "docker",
+            "run",
+            "-d",
+            "--rm",
+            "--name",
+            "vpn-admin-updater",
+            "-v",
+            f"{VPN_DIR}:/work",
+            "-v",
+            "/var/run/docker.sock:/var/run/docker.sock",
+            "-w",
+            "/work",
+            "docker:27-cli",
+            "sh",
+            "-c",
+            script,
+        ],
+        timeout=120,
+    )
 
 
 def wait_for_peer_files(peers, timeout=60):
