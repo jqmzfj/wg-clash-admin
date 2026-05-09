@@ -230,11 +230,9 @@
             <p class="eyebrow">AUDIT</p>
             <h2>最近操作</h2>
           </div>
-          <div class="log-count">第 {{ log_start }}-{{ log_end }} 条 / 共 {{ log_total }} 条</div>
-        </div>
-        <div class="pager pager-top">
-          <span class="page-meta">每页 {{ log_per_page }} 条</span>
-          <div class="page-actions">
+          <div class="log-toolbar">
+            <div class="log-count">第 {{ log_start }}-{{ log_end }} 条 / 共 {{ log_total }} 条，每页 {{ log_per_page }} 条</div>
+            <div class="log-pager" aria-label="日志分页">
             {% if log_page > 1 %}
               <a href="{{ url_for('dashboard', log_page=1) }}#logs">首页</a>
               <a href="{{ url_for('dashboard', log_page=log_page - 1) }}#logs">上一页</a>
@@ -259,6 +257,7 @@
               <span>下一页</span>
               <span>末页</span>
             {% endif %}
+            </div>
           </div>
         </div>
         <div class="log-list">
