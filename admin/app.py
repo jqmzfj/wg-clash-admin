@@ -62,7 +62,10 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=os.environ.get("SESSION_COOKIE_SECURE", "false").lower() == "true",
+    SEND_FILE_MAX_AGE_DEFAULT=0,
+    TEMPLATES_AUTO_RELOAD=True,
 )
+app.jinja_env.auto_reload = True
 
 
 class PrefixMiddleware:
@@ -91,6 +94,15 @@ URL_PREFIX = os.environ.get("URL_PREFIX", "").rstrip("/")
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 if URL_PREFIX:
     app.wsgi_app = PrefixMiddleware(app.wsgi_app, URL_PREFIX)
+
+
+@app.after_request
+def add_cache_headers(response):
+    if request.endpoint in {"dashboard", "login", "static"}:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
 
 
 def env(name, default):
@@ -623,7 +635,7 @@ def rebuild_admin():
         "mkdir -p /work/deploy; "
         "cd /work; "
         "sleep 2; "
-        "docker compose up -d --build vpn-admin > /work/deploy/update-rebuild.log 2>&1"
+        "docker compose up -d --build --force-recreate vpn-admin > /work/deploy/update-rebuild.log 2>&1"
     )
     try:
         run_command(["docker", "rm", "-f", "vpn-admin-updater"], timeout=30)
