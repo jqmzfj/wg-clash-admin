@@ -980,12 +980,40 @@ tbody tr:hover {
   font-weight: 800;
 }
 
+.empty-state {
+  border: 1px dashed rgba(78, 124, 255, 0.22);
+  border-radius: 8px;
+  padding: 20px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.52);
+  font-size: 14px;
+  font-weight: 800;
+  text-align: center;
+}
+
 .pager {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   align-items: center;
   gap: 10px;
   margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+.pager-top {
+  margin-top: 18px;
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border: 1px solid rgba(78, 124, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.54);
+}
+
+.page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .pager a,
@@ -1009,6 +1037,19 @@ tbody tr:hover {
 .pager span {
   color: rgba(105, 112, 131, 0.7);
   background: rgba(255, 255, 255, 0.52);
+}
+
+.pager .page-meta {
+  color: var(--muted);
+  background: transparent;
+  padding: 0;
+}
+
+.pager .page-gap {
+  min-width: 28px;
+  justify-content: center;
+  padding: 0 6px;
+  background: transparent;
 }
 
 .pager strong {

@@ -847,8 +847,11 @@ def logout():
 @app.route("/")
 def dashboard():
     require_admin()
-    log_page = max(1, int(request.args.get("log_page", "1") or "1"))
-    log_per_page = 8
+    try:
+        log_page = max(1, int(request.args.get("log_page", "1") or "1"))
+    except ValueError:
+        log_page = 1
+    log_per_page = max(1, int(env("LOG_PER_PAGE", "6")))
     log_offset = (log_page - 1) * log_per_page
     runtime = read_runtime_config()
     settings = {
@@ -875,6 +878,10 @@ def dashboard():
         """,
         (log_per_page, log_offset),
     )
+    log_window = {1, log_total_pages, log_page - 1, log_page, log_page + 1}
+    log_pages = [page for page in sorted(log_window) if 1 <= page <= log_total_pages]
+    log_start = log_offset + 1 if log_total else 0
+    log_end = min(log_offset + len(logs), log_total)
     return render_template(
         "dashboard.html",
         runtime=runtime,
@@ -882,6 +889,10 @@ def dashboard():
         users=users,
         logs=logs,
         log_page=log_page,
+        log_pages=log_pages,
+        log_start=log_start,
+        log_end=log_end,
+        log_per_page=log_per_page,
         log_total_pages=log_total_pages,
         log_total=log_total,
         version=get_version_info(),

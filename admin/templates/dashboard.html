@@ -230,7 +230,36 @@
             <p class="eyebrow">AUDIT</p>
             <h2>最近操作</h2>
           </div>
-          <div class="log-count">共 {{ log_total }} 条</div>
+          <div class="log-count">第 {{ log_start }}-{{ log_end }} 条 / 共 {{ log_total }} 条</div>
+        </div>
+        <div class="pager pager-top">
+          <span class="page-meta">每页 {{ log_per_page }} 条</span>
+          <div class="page-actions">
+            {% if log_page > 1 %}
+              <a href="{{ url_for('dashboard', log_page=1) }}#logs">首页</a>
+              <a href="{{ url_for('dashboard', log_page=log_page - 1) }}#logs">上一页</a>
+            {% else %}
+              <span>首页</span>
+              <span>上一页</span>
+            {% endif %}
+            {% for page in log_pages %}
+              {% if not loop.first and page - log_pages[loop.index0 - 1] > 1 %}
+                <span class="page-gap">...</span>
+              {% endif %}
+              {% if page == log_page %}
+                <strong>{{ page }}</strong>
+              {% else %}
+                <a href="{{ url_for('dashboard', log_page=page) }}#logs">{{ page }}</a>
+              {% endif %}
+            {% endfor %}
+            {% if log_page < log_total_pages %}
+              <a href="{{ url_for('dashboard', log_page=log_page + 1) }}#logs">下一页</a>
+              <a href="{{ url_for('dashboard', log_page=log_total_pages) }}#logs">末页</a>
+            {% else %}
+              <span>下一页</span>
+              <span>末页</span>
+            {% endif %}
+          </div>
         </div>
         <div class="log-list">
           {% for log in logs %}
@@ -255,20 +284,38 @@
               <p class="log-empty">无详情</p>
             {% endif %}
           </div>
+          {% else %}
+          <div class="empty-state">暂无操作记录</div>
           {% endfor %}
         </div>
         <div class="pager">
+          <span class="page-meta">第 {{ log_page }} / {{ log_total_pages }} 页</span>
+          <div class="page-actions">
           {% if log_page > 1 %}
+            <a href="{{ url_for('dashboard', log_page=1) }}#logs">首页</a>
             <a href="{{ url_for('dashboard', log_page=log_page - 1) }}#logs">上一页</a>
           {% else %}
+            <span>首页</span>
             <span>上一页</span>
           {% endif %}
-          <strong>{{ log_page }} / {{ log_total_pages }}</strong>
+          {% for page in log_pages %}
+            {% if not loop.first and page - log_pages[loop.index0 - 1] > 1 %}
+              <span class="page-gap">...</span>
+            {% endif %}
+            {% if page == log_page %}
+              <strong>{{ page }}</strong>
+            {% else %}
+              <a href="{{ url_for('dashboard', log_page=page) }}#logs">{{ page }}</a>
+            {% endif %}
+          {% endfor %}
           {% if log_page < log_total_pages %}
             <a href="{{ url_for('dashboard', log_page=log_page + 1) }}#logs">下一页</a>
+            <a href="{{ url_for('dashboard', log_page=log_total_pages) }}#logs">末页</a>
           {% else %}
             <span>下一页</span>
+            <span>末页</span>
           {% endif %}
+          </div>
         </div>
       </section>
     </main>
