@@ -193,6 +193,12 @@ http://服务器IP:19090/sub/clash
 URL_PREFIX=
 ```
 
+注意：修改 `URL_PREFIX` 后需要重新创建 `vpn-admin` 容器才会生效：
+
+```bash
+docker compose up -d --force-recreate vpn-admin
+```
+
 `STARTUP_WAIT_SECONDS`
 
 后台启动时等待 PostgreSQL 和 Redis 可连接的最长秒数。默认 `90`。

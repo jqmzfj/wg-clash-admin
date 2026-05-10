@@ -36,7 +36,7 @@ services:
       - HOST=${HOST:-0.0.0.0}
       - PORT=${PORT:-19090}
       - VPN_DIR=${VPN_DIR:-/app/vpn}
-      - URL_PREFIX=${URL_PREFIX:-/sub/clash}
+      - URL_PREFIX=${URL_PREFIX-/sub/clash}
       - STARTUP_WAIT_SECONDS=${STARTUP_WAIT_SECONDS:-90}
       - ADMIN_SERVER=${ADMIN_SERVER:-simple}
       - ADMIN_UPDATER_IMAGE=${ADMIN_UPDATER_IMAGE:-}
