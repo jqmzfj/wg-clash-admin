@@ -96,6 +96,11 @@ if URL_PREFIX:
     app.wsgi_app = PrefixMiddleware(app.wsgi_app, URL_PREFIX)
 
 
+@app.route("/favicon.ico")
+def favicon():
+    return send_file(ADMIN_DIR / "static" / "favicon.svg", mimetype="image/svg+xml")
+
+
 @app.after_request
 def add_cache_headers(response):
     if request.endpoint in {"dashboard", "login", "static"}:
@@ -635,7 +640,11 @@ def rebuild_admin():
         "mkdir -p /work/deploy; "
         "cd /work; "
         "sleep 2; "
-        "docker compose up -d --build --force-recreate vpn-admin > /work/deploy/update-rebuild.log 2>&1"
+        "{ "
+        "docker compose stop vpn-admin || true; "
+        "docker compose rm -sf vpn-admin || true; "
+        "docker compose up -d --build --force-recreate --remove-orphans vpn-admin; "
+        "} > /work/deploy/update-rebuild.log 2>&1"
     )
     try:
         run_command(["docker", "rm", "-f", "vpn-admin-updater"], timeout=30)
@@ -843,7 +852,7 @@ def login():
             session["csrf_token"] = secrets.token_urlsafe(24)
             return redirect(url_for("dashboard"))
         flash("账号或密码不正确", "error")
-    return render_template("login.html")
+    return render_template("login.html", asset_version=read_version(local_version_file()) or str(APP_STARTED_AT))
 
 
 @app.route("/logout", methods=["POST"])
