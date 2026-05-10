@@ -899,6 +899,11 @@ tbody tr:hover {
   font-weight: 800;
 }
 
+.log-toolbar .log-pager,
+.log-pager-inline {
+  display: none !important;
+}
+
 .log-detail {
   margin-top: 12px;
   border: 1px solid rgba(78, 124, 255, 0.1);
