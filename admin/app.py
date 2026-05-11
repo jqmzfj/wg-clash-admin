@@ -405,7 +405,8 @@ def read_runtime_config():
     server_url = config_value("SERVERURL", "127.0.0.1")
     server_port = int(config_value("SERVERPORT", "51820"))
     peers = int(config_value("PEERS", "1"))
-    return {"server_url": server_url, "server_port": server_port, "peers": peers}
+    local_node_prefix = config_value("LOCAL_NODE_PREFIX", "peer")
+    return {"server_url": server_url, "server_port": server_port, "peers": peers, "local_node_prefix": local_node_prefix}
 
 
 def regex_value(text, pattern, default):
@@ -454,11 +455,12 @@ def backup_file(path):
     backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
 
 
-def update_compose(server_url, port, peers):
+def update_compose(server_url, port, peers, local_node_prefix):
     update_env_file({
         "SERVERURL": server_url,
         "SERVERPORT": str(port),
         "PEERS": str(peers),
+        "LOCAL_NODE_PREFIX": local_node_prefix,
     })
 
 
@@ -830,15 +832,16 @@ def build_subscription_yaml():
     return yaml.safe_dump(base_config, allow_unicode=True, sort_keys=False)
 
 
-def apply_settings_background(lock_id, actor_user_id, server_url, port, peers):
-    detail = f"SERVERURL={server_url}, SERVERPORT={port}, PEERS={peers}"
+def apply_settings_background(lock_id, actor_user_id, server_url, port, peers, local_node_prefix):
+    detail = f"SERVERURL={server_url}, SERVERPORT={port}, PEERS={peers}, LOCAL_NODE_PREFIX={local_node_prefix}"
     with app.app_context():
         try:
-            update_compose(server_url, port, peers)
+            update_compose(server_url, port, peers, local_node_prefix)
             update_peer_endpoints(server_url, port)
             set_setting("server_url", server_url)
             set_setting("server_port", port)
             set_setting("peers", peers)
+            set_setting("local_node_prefix", local_node_prefix)
             restart_wireguard()
             refresh_config()
             with get_db().cursor() as cur:
@@ -1019,6 +1022,7 @@ def dashboard():
         "server_url": get_setting("server_url", runtime["server_url"]),
         "server_port": int(get_setting("server_port", runtime["server_port"])),
         "peers": int(get_setting("peers", runtime["peers"])),
+        "local_node_prefix": get_setting("local_node_prefix", runtime["local_node_prefix"]),
     }
     users = query_all("SELECT id, username, role, is_active, sub_token, created_at, updated_at FROM users ORDER BY id")
     for user in users:
@@ -1072,10 +1076,13 @@ def apply_settings():
     verify_csrf()
     try:
         server_url = request.form.get("server_url", "").strip()
+        local_node_prefix = request.form.get("local_node_prefix", "").strip() or "peer"
         port = int(request.form.get("server_port", "0"))
         peers = int(request.form.get("peers", "0"))
         if not re.fullmatch(r"[A-Za-z0-9_.:-]+", server_url):
             raise ValueError("公网地址格式不合法")
+        if not re.fullmatch(r"[\w.\-\u4e00-\u9fa5]{1,24}", local_node_prefix):
+            raise ValueError("节点名前缀必须是 1-24 位中文、字母、数字、点、下划线或横线")
         validate_port(port)
         validate_peers(peers)
         lock_id = acquire_operation_lock()
@@ -1083,7 +1090,7 @@ def apply_settings():
             raise RuntimeError("已有刷新或切换任务正在执行，请稍后再试")
         worker = threading.Thread(
             target=apply_settings_background,
-            args=(lock_id, g.user["id"], server_url, port, peers),
+            args=(lock_id, g.user["id"], server_url, port, peers, local_node_prefix),
             daemon=True,
         )
         worker.start()

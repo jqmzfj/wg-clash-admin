@@ -387,6 +387,27 @@ SERVERPORT:51820/udp
 
 WireGuard 客户端数量。后台页面也可以修改此值。
 
+`LOCAL_NODE_PREFIX`
+
+本机节点名前缀。生成 Clash 订阅时，`peer1`、`peer2` 会显示为这个前缀加序号。默认：
+
+```text
+peer
+```
+
+例如：
+
+```env
+LOCAL_NODE_PREFIX=香港
+```
+
+生成的节点名就是：
+
+```text
+香港1
+香港2
+```
+
 `PEERDNS`
 
 客户端 DNS。可以使用公共 DNS，例如 `1.1.1.1`、`8.8.8.8`，也可以使用你的内网 DNS。

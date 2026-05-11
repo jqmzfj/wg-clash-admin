@@ -76,6 +76,10 @@
           <span>当前 PEERS</span>
           <strong>{{ runtime.peers }}</strong>
         </article>
+        <article class="metric-card">
+          <span>本机节点名</span>
+          <strong>{{ runtime.local_node_prefix }}1</strong>
+        </article>
       </section>
 
       <section class="panel-grid single">
@@ -91,6 +95,10 @@
             <label>
               <span>公网地址</span>
               <input name="server_url" value="{{ settings.server_url }}" required>
+            </label>
+            <label>
+              <span>本机节点名前缀</span>
+              <input name="local_node_prefix" value="{{ settings.local_node_prefix }}" placeholder="例如 香港，将生成 香港1、香港2" required>
             </label>
             <div class="two-col">
               <label>

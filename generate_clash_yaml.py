@@ -10,6 +10,19 @@ ENV_FILE = "./.env"
 
 proxies = []
 
+def read_env_value(key, default=""):
+    if os.environ.get(key):
+        return os.environ[key]
+    try:
+        with open(ENV_FILE, "r", encoding="utf-8") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if line.startswith(f"{key}="):
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return default
+
 def peer_sort_key(peer_dir):
     match = re.fullmatch(r"peer(\d+)", peer_dir)
     return (0, int(match.group(1))) if match else (1, peer_dir)
@@ -39,6 +52,7 @@ def read_peer_limit():
     return None
 
 peer_limit = read_peer_limit()
+local_node_prefix = read_env_value("LOCAL_NODE_PREFIX", "peer").strip() or "peer"
 
 for peer_dir in sorted(os.listdir(CONFIG_DIR), key=peer_sort_key):
     peer_match = re.fullmatch(r"peer(\d+)", peer_dir)
@@ -69,8 +83,9 @@ for peer_dir in sorted(os.listdir(CONFIG_DIR), key=peer_sort_key):
 
     host, port = endpoint.split(":")
 
+    node_index = peer_match.group(1) if peer_match else peer_dir
     proxies.append({
-        "name": peer_dir,
+        "name": f"{local_node_prefix}{node_index}",
         "type": "wireguard",
         "server": host,
         "port": int(port),

@@ -13,6 +13,7 @@ services:
       - SERVERURL=${SERVERURL:?set SERVERURL in .env}
       - SERVERPORT=${SERVERPORT:-18021}
       - PEERS=${PEERS:-10}
+      - LOCAL_NODE_PREFIX=${LOCAL_NODE_PREFIX:-peer}
       - PEERDNS=${PEERDNS:-1.1.1.1}
       - INTERNAL_SUBNET=${INTERNAL_SUBNET:-10.66.66.0/24}
     ports:
@@ -37,6 +38,7 @@ services:
       - PORT=${PORT:-19090}
       - VPN_DIR=${VPN_DIR:-/app/vpn}
       - URL_PREFIX=${URL_PREFIX-/sub/clash}
+      - LOCAL_NODE_PREFIX=${LOCAL_NODE_PREFIX:-peer}
       - STARTUP_WAIT_SECONDS=${STARTUP_WAIT_SECONDS:-90}
       - ADMIN_SERVER=${ADMIN_SERVER:-simple}
       - ADMIN_UPDATER_IMAGE=${ADMIN_UPDATER_IMAGE:-}
