@@ -434,7 +434,8 @@ select:focus {
 }
 
 .two-col,
-.user-create {
+.user-create,
+.subscription-create {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
@@ -709,6 +710,11 @@ select:focus {
   margin: 20px 0;
 }
 
+.subscription-create {
+  grid-template-columns: minmax(180px, 0.7fr) minmax(260px, 1.4fr) 150px;
+  margin: 20px 0 8px;
+}
+
 .table-wrap {
   overflow-x: auto;
 }
@@ -718,6 +724,10 @@ table {
   border-collapse: collapse;
   table-layout: fixed;
   min-width: 1180px;
+}
+
+.source-table {
+  min-width: 920px;
 }
 
 .col-id {
@@ -1078,6 +1088,7 @@ time {
   .metrics-grid,
   .two-col,
   .user-create,
+  .subscription-create,
   .pager {
     grid-template-columns: 1fr;
   }

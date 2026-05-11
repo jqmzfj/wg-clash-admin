@@ -31,6 +31,7 @@
       <nav class="nav-list">
         <a href="#control">入口控制</a>
         <a href="#version">版本更新</a>
+        <a href="#subscriptions">订阅合并</a>
         <a href="#users">账号管理</a>
         <a href="#logs">操作记录</a>
       </nav>
@@ -147,6 +148,66 @@
         {% else %}
           <p class="version-note">当前已经是最新版本。</p>
         {% endif %}
+      </section>
+
+      <section id="subscriptions" class="panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">MERGE</p>
+            <h2>订阅合并</h2>
+          </div>
+        </div>
+        <form method="post" action="{{ url_for('create_external_subscription') }}" class="subscription-create">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input name="name" placeholder="服务器名称，例如 hk-01" required>
+          <input name="url" type="url" placeholder="其他 vpn-admin 的 Clash 订阅链接" required>
+          <button class="secondary-btn" type="submit">添加订阅源</button>
+        </form>
+        <p class="version-note">客户端每次拉取本机订阅时，后台会尝试获取启用的外部订阅源并合并节点。外部链接超时、失败或返回异常时会自动跳过，不影响本机订阅。</p>
+        <div class="table-wrap">
+          <table class="source-table">
+            <colgroup>
+              <col class="col-id">
+              <col class="col-account">
+              <col>
+              <col class="col-status">
+              <col class="col-actions">
+            </colgroup>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>名称</th>
+                <th>订阅链接</th>
+                <th>状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for source in external_subscriptions %}
+              <tr>
+                <td>{{ source.id }}</td>
+                <td>{{ source.name }}</td>
+                <td><code class="table-url">{{ source.url }}</code></td>
+                <td><span class="pill {{ 'ok' if source.is_active else 'off' }}">{{ '启用' if source.is_active else '禁用' }}</span></td>
+                <td class="actions">
+                  <form method="post" action="{{ url_for('toggle_external_subscription', source_id=source.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit">{{ '禁用' if source.is_active else '启用' }}</button>
+                  </form>
+                  <form method="post" action="{{ url_for('delete_external_subscription', source_id=source.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" onclick="return window.confirm('确认删除这个订阅源？')">删除</button>
+                  </form>
+                </td>
+              </tr>
+              {% else %}
+              <tr>
+                <td colspan="5"><span class="muted">暂无外部订阅源</span></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <section id="users" class="panel">

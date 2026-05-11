@@ -9,12 +9,14 @@ import shutil
 import subprocess
 import threading
 import time
+import urllib.request
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
 import psycopg
 import redis
+import yaml
 from flask import (
     Flask,
     Response,
@@ -54,6 +56,8 @@ SESSION_TTL_SECONDS = 60 * 60 * 24 * 14
 LOCK_TTL_SECONDS = 180
 RESERVED_PORTS = {22, 25, 53, 80, 110, 143, 443, 465, 587, 993, 995, 2375, 2376, 5432, 6379}
 APP_STARTED_AT = int(time.time())
+EXTERNAL_SUBSCRIPTION_TIMEOUT = float(os.environ.get("EXTERNAL_SUBSCRIPTION_TIMEOUT", "4"))
+EXTERNAL_SUBSCRIPTION_MAX_BYTES = int(os.environ.get("EXTERNAL_SUBSCRIPTION_MAX_BYTES", "1048576"))
 
 
 app = Flask(__name__)
@@ -184,6 +188,18 @@ def init_db():
                 )
                 """
             )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS external_subscriptions (
+                    id BIGSERIAL PRIMARY KEY,
+                    name TEXT UNIQUE NOT NULL,
+                    url TEXT NOT NULL,
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
             cur.execute("SELECT COUNT(*) FROM users")
             user_count = cur.fetchone()[0]
             if user_count == 0:
@@ -303,6 +319,15 @@ def log_action(action, detail="", success=True):
         cur.execute(
             "INSERT INTO operation_logs (actor_user_id, action, detail, success) VALUES (%s, %s, %s, %s)",
             (user_id, action, detail, success),
+        )
+    get_db().commit()
+
+
+def log_system_action(action, detail="", success=True):
+    with get_db().cursor() as cur:
+        cur.execute(
+            "INSERT INTO operation_logs (actor_user_id, action, detail, success) VALUES (%s, %s, %s, %s)",
+            (None, action, detail[:1800], success),
         )
     get_db().commit()
 
@@ -690,6 +715,121 @@ def refresh_config():
     return run_command(["bash", str(RUN_SCRIPT)], timeout=180)
 
 
+def valid_subscription_url(value):
+    return bool(re.fullmatch(r"https?://[^\s]+", value or ""))
+
+
+def unique_name(base, used_names):
+    name = str(base or "node").strip() or "node"
+    if name not in used_names:
+        used_names.add(name)
+        return name
+    index = 2
+    while f"{name}-{index}" in used_names:
+        index += 1
+    next_name = f"{name}-{index}"
+    used_names.add(next_name)
+    return next_name
+
+
+def fetch_external_subscription(source):
+    request = urllib.request.Request(
+        source["url"],
+        headers={"User-Agent": f"wg-clash-admin/{read_version(local_version_file()) or 'local'}"},
+    )
+    with urllib.request.urlopen(request, timeout=EXTERNAL_SUBSCRIPTION_TIMEOUT) as response:
+        status = getattr(response, "status", 200)
+        if status >= 400:
+            raise RuntimeError(f"HTTP {status}")
+        content = response.read(EXTERNAL_SUBSCRIPTION_MAX_BYTES + 1)
+        if len(content) > EXTERNAL_SUBSCRIPTION_MAX_BYTES:
+            raise RuntimeError("订阅文件过大")
+    data = yaml.safe_load(content.decode("utf-8")) or {}
+    if not isinstance(data, dict):
+        raise RuntimeError("订阅内容不是 YAML 对象")
+    return data
+
+
+def rewrite_rule_target(rule, name_map):
+    if not isinstance(rule, str):
+        return rule
+    parts = rule.split(",")
+    for index in range(len(parts) - 1, -1, -1):
+        target = parts[index].strip()
+        if target in name_map:
+            parts[index] = parts[index].replace(target, name_map[target], 1)
+            return ",".join(parts)
+    return rule
+
+
+def merge_clash_config(base_config, external_configs):
+    base_config = base_config or {}
+    base_proxies = base_config.setdefault("proxies", [])
+    base_groups = base_config.setdefault("proxy-groups", [])
+    base_rules = base_config.setdefault("rules", [])
+    used_names = {
+        item.get("name")
+        for item in list(base_proxies) + list(base_groups)
+        if isinstance(item, dict) and item.get("name")
+    }
+    selector = next((group for group in base_groups if isinstance(group, dict) and group.get("name") == "🚀 节点选择"), None)
+    selector_entries = selector.setdefault("proxies", []) if selector is not None else None
+
+    for source, external in external_configs:
+        prefix = re.sub(r"[^A-Za-z0-9_.-]+", "-", source["name"]).strip("-") or f"sub-{source['id']}"
+        name_map = {}
+        imported_proxy_names = []
+        for proxy in external.get("proxies") or []:
+            if not isinstance(proxy, dict) or not proxy.get("name"):
+                continue
+            copied_proxy = dict(proxy)
+            next_name = unique_name(f"{prefix}-{proxy['name']}", used_names)
+            name_map[proxy["name"]] = next_name
+            copied_proxy["name"] = next_name
+            base_proxies.append(copied_proxy)
+            imported_proxy_names.append(next_name)
+
+        external_groups = [group for group in external.get("proxy-groups") or [] if isinstance(group, dict) and group.get("name")]
+        for group in external_groups:
+            name_map[group["name"]] = unique_name(f"{prefix}-{group['name']}", used_names)
+
+        for group in external_groups:
+            if not isinstance(group, dict) or not group.get("name"):
+                continue
+            copied_group = dict(group)
+            copied_group["name"] = name_map[group["name"]]
+            copied_group["proxies"] = [name_map.get(item, item) for item in group.get("proxies") or []]
+            base_groups.append(copied_group)
+
+        if selector_entries is not None:
+            target_names = [name_map.get(group.get("name")) for group in external_groups]
+            target_names = [name for name in target_names if name] or imported_proxy_names
+            selector_entries.extend(name for name in target_names if name not in selector_entries)
+
+        for rule in external.get("rules") or []:
+            base_rules.append(rewrite_rule_target(rule, name_map))
+
+    return base_config
+
+
+def build_subscription_yaml():
+    with CLASH_FILE.open("r", encoding="utf-8") as file:
+        base_config = yaml.safe_load(file) or {}
+    sources = query_all("SELECT id, name, url FROM external_subscriptions WHERE is_active = TRUE ORDER BY id")
+    external_configs = []
+    failures = []
+    for source in sources:
+        try:
+            external_configs.append((source, fetch_external_subscription(source)))
+        except Exception as exc:
+            failures.append(f"{source['name']}: {exc}")
+    if failures:
+        log_system_action("merge_subscription_skip", "; ".join(failures), False)
+    if external_configs:
+        base_config = merge_clash_config(base_config, external_configs)
+    return yaml.safe_dump(base_config, allow_unicode=True, sort_keys=False)
+
+
 def apply_settings_background(lock_id, actor_user_id, server_url, port, peers):
     detail = f"SERVERURL={server_url}, SERVERPORT={port}, PEERS={peers}"
     with app.app_context():
@@ -883,6 +1023,9 @@ def dashboard():
     users = query_all("SELECT id, username, role, is_active, sub_token, created_at, updated_at FROM users ORDER BY id")
     for user in users:
         user["subscription_url"] = url_for("subscription", token=user["sub_token"], _external=True) if user.get("sub_token") else ""
+    external_subscriptions = query_all(
+        "SELECT id, name, url, is_active, created_at, updated_at FROM external_subscriptions ORDER BY id"
+    )
     log_total_row = query_one("SELECT COUNT(*) AS total FROM operation_logs")
     log_total = log_total_row["total"] if log_total_row else 0
     log_total_pages = max(1, (log_total + log_per_page - 1) // log_per_page)
@@ -908,6 +1051,7 @@ def dashboard():
         runtime=runtime,
         settings=settings,
         users=users,
+        external_subscriptions=external_subscriptions,
         logs=logs,
         log_page=log_page,
         log_pages=log_pages,
@@ -948,6 +1092,54 @@ def apply_settings():
         log_action("apply_settings_async_submit", str(exc), False)
         flash(str(exc), "error")
     return redirect(url_for("dashboard"))
+
+
+@app.route("/external-subscriptions/create", methods=["POST"])
+def create_external_subscription():
+    require_admin()
+    verify_csrf()
+    try:
+        name = request.form.get("name", "").strip()
+        url = request.form.get("url", "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_.\-\u4e00-\u9fa5]{2,32}", name):
+            raise ValueError("订阅名称必须是 2-32 位中文、字母、数字、点、下划线或横线")
+        if not valid_subscription_url(url):
+            raise ValueError("订阅链接必须以 http:// 或 https:// 开头，且不能包含空格")
+        with get_db().cursor() as cur:
+            cur.execute(
+                "INSERT INTO external_subscriptions (name, url) VALUES (%s, %s)",
+                (name, url),
+            )
+        get_db().commit()
+        log_action("create_external_subscription", name)
+        flash("外部订阅源已添加", "success")
+    except Exception as exc:
+        get_db().rollback()
+        log_action("create_external_subscription", str(exc), False)
+        flash(str(exc), "error")
+    return redirect(url_for("dashboard") + "#subscriptions")
+
+
+@app.route("/external-subscriptions/<int:source_id>/toggle", methods=["POST"])
+def toggle_external_subscription(source_id):
+    require_admin()
+    verify_csrf()
+    with get_db().cursor() as cur:
+        cur.execute("UPDATE external_subscriptions SET is_active = NOT is_active, updated_at = NOW() WHERE id = %s", (source_id,))
+    get_db().commit()
+    log_action("toggle_external_subscription", str(source_id))
+    return redirect(url_for("dashboard") + "#subscriptions")
+
+
+@app.route("/external-subscriptions/<int:source_id>/delete", methods=["POST"])
+def delete_external_subscription(source_id):
+    require_admin()
+    verify_csrf()
+    with get_db().cursor() as cur:
+        cur.execute("DELETE FROM external_subscriptions WHERE id = %s", (source_id,))
+    get_db().commit()
+    log_action("delete_external_subscription", str(source_id))
+    return redirect(url_for("dashboard") + "#subscriptions")
 
 
 @app.route("/refresh", methods=["POST"])
@@ -1114,7 +1306,16 @@ def subscription():
         return Response("invalid token\n", status=403, mimetype="text/plain")
     if not CLASH_FILE.exists():
         return Response("clash config not generated\n", status=404, mimetype="text/plain")
-    return send_file(CLASH_FILE, mimetype="text/yaml; charset=utf-8", as_attachment=False, download_name="clash-config.yaml")
+    try:
+        content = build_subscription_yaml()
+    except Exception as exc:
+        log_system_action("build_subscription", str(exc), False)
+        return send_file(CLASH_FILE, mimetype="text/yaml; charset=utf-8", as_attachment=False, download_name="clash-config.yaml")
+    return Response(
+        content,
+        mimetype="text/yaml; charset=utf-8",
+        headers={"Content-Disposition": "inline; filename=clash-config.yaml"},
+    )
 
 
 if __name__ == "__main__":
