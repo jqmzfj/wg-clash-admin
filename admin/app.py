@@ -861,6 +861,10 @@ def append_unique(target, values):
             target.append(value)
 
 
+def normalize_group_name(name):
+    return re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "", str(name or "")).lower()
+
+
 def resolve_external_group_entries(name, external_group_map, proxy_name_map, seen=None):
     if name in proxy_name_map:
         return [proxy_name_map[name]]
@@ -894,8 +898,14 @@ def merge_clash_config(base_config, external_configs):
         for group in base_groups
         if isinstance(group, dict) and group.get("name")
     }
+    normalized_base_group_map = {}
+    for group in base_groups:
+        if isinstance(group, dict) and group.get("name"):
+            normalized_base_group_map.setdefault(normalize_group_name(group["name"]), group)
     selector_name = "🚀 节点选择"
     selector = base_group_map.get(selector_name)
+    if selector is None:
+        selector = normalized_base_group_map.get(normalize_group_name(selector_name))
     selector_entries = selector.setdefault("proxies", []) if selector is not None else None
 
     for source, external in external_configs:
@@ -914,25 +924,29 @@ def merge_clash_config(base_config, external_configs):
 
         external_groups = [group for group in external.get("proxy-groups") or [] if isinstance(group, dict) and group.get("name")]
         external_group_map = {group["name"]: group for group in external_groups}
+        merged_selector_entries = []
 
         for group in external_groups:
-            base_group = base_group_map.get(group["name"])
+            base_group = base_group_map.get(group["name"]) or normalized_base_group_map.get(normalize_group_name(group["name"]))
             if base_group is None:
                 continue
             merged_entries = []
             for item in group.get("proxies") or []:
                 merged_entries.extend(resolve_external_group_entries(item, external_group_map, proxy_name_map))
             append_unique(base_group.setdefault("proxies", []), merged_entries)
+            if selector is not None and base_group is selector:
+                merged_selector_entries.extend(merged_entries)
 
-        if selector_entries is not None:
+        if selector_entries is not None and not merged_selector_entries:
             append_unique(selector_entries, imported_proxy_names)
 
         rule_target_map = dict(proxy_name_map)
         for group in external_groups:
-            if group["name"] in base_group_map:
-                rule_target_map[group["name"]] = group["name"]
+            base_group = base_group_map.get(group["name"]) or normalized_base_group_map.get(normalize_group_name(group["name"]))
+            if base_group is not None:
+                rule_target_map[group["name"]] = base_group["name"]
             elif selector_entries is not None:
-                rule_target_map[group["name"]] = selector_name
+                rule_target_map[group["name"]] = selector["name"]
         for rule in external.get("rules") or []:
             base_rules.append(rewrite_rule_target(rule, rule_target_map))
 
