@@ -718,6 +718,7 @@ def update_repo_dir_for_runner():
 
 def build_stable_update_script(branch, sync_paths):
     quoted_paths = " ".join(shlex.quote(path.as_posix()) for path in sync_paths)
+    version_path = shlex.quote(safe_relative_path(UPDATE_VERSION_FILE).as_posix())
     return f"""
 set -eu
 LOG=/work/deploy/update-rebuild.log
@@ -726,6 +727,43 @@ exec > "$LOG" 2>&1
 echo "update started at $(date)"
 sleep 2
 cd /work
+ADMIN_SERVICE=vpn-admin
+ADMIN_CONTAINER="${{ADMIN_CONTAINER_NAME:-vpn-admin}}"
+COMPOSE_FILE=/work/docker-compose.yml
+ENV_FILE=/work/.env
+if [ -f "$ENV_FILE" ]; then
+  ENV_ADMIN_CONTAINER="$(grep -E '^ADMIN_CONTAINER_NAME=' "$ENV_FILE" | tail -n 1 | cut -d= -f2-)"
+  ADMIN_CONTAINER="${{ENV_ADMIN_CONTAINER:-$ADMIN_CONTAINER}}"
+fi
+compose() {{
+  if [ -f "$ENV_FILE" ]; then
+    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+  else
+    docker compose -f "$COMPOSE_FILE" "$@"
+  fi
+}}
+stop_admin() {{
+  echo "stopping old admin service: $ADMIN_SERVICE"
+  compose stop "$ADMIN_SERVICE" || true
+  compose rm -sf "$ADMIN_SERVICE" || true
+  docker rm -f "$ADMIN_CONTAINER" 2>/dev/null || true
+}}
+wait_admin_running() {{
+  i=0
+  while [ "$i" -lt 30 ]; do
+    state="$(docker inspect "$ADMIN_CONTAINER" --format '{{{{.State.Status}}}}' 2>/dev/null || true)"
+    if [ "$state" = "running" ]; then
+      echo "admin container is running: $ADMIN_CONTAINER"
+      return 0
+    fi
+    i=$((i + 1))
+    sleep 1
+  done
+  echo "admin container did not become running"
+  docker ps -a --filter "name=$ADMIN_CONTAINER"
+  compose logs --tail=120 "$ADMIN_SERVICE" || true
+  return 1
+}}
 REPO_DIR={shlex.quote(str(update_repo_dir_for_runner()))}
 REPO_URL={shlex.quote(UPDATE_REPO_URL)}
 BRANCH={shlex.quote(branch)}
@@ -737,9 +775,9 @@ fi
 git -C "$REPO_DIR" -c safe.directory="$REPO_DIR" fetch --quiet origin
 git -C "$REPO_DIR" -c safe.directory="$REPO_DIR" checkout "$BRANCH" || git -C "$REPO_DIR" -c safe.directory="$REPO_DIR" checkout -b "$BRANCH" "origin/$BRANCH"
 git -C "$REPO_DIR" -c safe.directory="$REPO_DIR" pull --ff-only origin "$BRANCH"
-echo "stopping old vpn-admin before syncing files"
-docker compose stop vpn-admin || true
-docker compose rm -sf vpn-admin || true
+echo "before sync version: $(cat /work/{version_path} 2>/dev/null || true)"
+echo "target version: $(cat "$REPO_DIR/{version_path}" 2>/dev/null || true)"
+stop_admin
 BACKUP="/work/deploy/backups/update-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$BACKUP"
 for rel in {quoted_paths}; do
@@ -758,7 +796,13 @@ for rel in {quoted_paths}; do
   cp -a "$src" "$dst"
   echo "synced $rel"
 done
-docker compose up -d --build --force-recreate --remove-orphans vpn-admin
+echo "after sync version: $(cat /work/{version_path} 2>/dev/null || true)"
+echo "building fresh admin image"
+compose build --no-cache "$ADMIN_SERVICE"
+echo "starting fresh admin container"
+compose up -d --force-recreate --remove-orphans "$ADMIN_SERVICE"
+wait_admin_running
+docker ps --filter "name=$ADMIN_CONTAINER"
 echo "update finished at $(date)"
 """.strip()
 

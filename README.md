@@ -597,19 +597,24 @@ http://服务器IP:19090/sub/clash/file/clash.yaml?token=用户token
 ```bash
 cd /app/vpn/wg-clash-admin
 git pull --ff-only origin main
-docker compose stop vpn-admin
-docker compose rm -sf vpn-admin
+docker compose --env-file /work/.env -f /work/docker-compose.yml stop vpn-admin
+docker compose --env-file /work/.env -f /work/docker-compose.yml rm -sf vpn-admin
+docker rm -f vpn-admin
 cp /app/vpn/wg-clash-admin/白名单路径 /app/vpn/对应路径
-docker compose up -d --build --force-recreate --remove-orphans vpn-admin
+docker compose --env-file /work/.env -f /work/docker-compose.yml build --no-cache vpn-admin
+docker compose --env-file /work/.env -f /work/docker-compose.yml up -d --force-recreate --remove-orphans vpn-admin
+docker inspect vpn-admin --format '{{.State.Status}}'
 ```
 
 更新命令由临时容器 `vpn-admin-updater` 执行。`vpn-admin` 本身只负责启动这个临时容器并返回更新页，后续拉取、停止旧容器、覆盖文件、重建启动都由临时容器接管。
 
-关键点：覆盖运行目录前会先停止旧的 `vpn-admin` 容器，避免出现“旧 Python 进程读取新模板文件”的半更新状态。执行日志会写入：
+关键点：覆盖运行目录前会先停止旧的 `vpn-admin` 容器，避免出现“旧 Python 进程读取新模板文件”的半更新状态。新版本会显式指定 compose 文件和 `.env` 文件，无缓存重建后台镜像，并在启动后等待容器进入 `running` 状态。执行日志会写入：
 
 ```text
 deploy/update-rebuild.log
 ```
+
+这个日志会记录同步前版本、目标版本、同步后版本、构建过程和新容器启动检查结果。如果页面提示更新完成但仍旧显示旧版本，优先查看这个日志。
 
 实际同步的路径由 `UPDATE_SYNC_PATHS` 控制。默认会同步：
 
