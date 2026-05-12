@@ -855,6 +855,30 @@ def rewrite_rule_target(rule, name_map):
     return rule
 
 
+def append_unique(target, values):
+    for value in values:
+        if value and value not in target:
+            target.append(value)
+
+
+def resolve_external_group_entries(name, external_group_map, proxy_name_map, seen=None):
+    if name in proxy_name_map:
+        return [proxy_name_map[name]]
+    if name in ("DIRECT", "REJECT"):
+        return [name]
+    if name not in external_group_map:
+        return []
+    seen = seen or set()
+    if name in seen:
+        return []
+    seen.add(name)
+    entries = []
+    for item in external_group_map[name].get("proxies") or []:
+        entries.extend(resolve_external_group_entries(item, external_group_map, proxy_name_map, seen))
+    seen.remove(name)
+    return entries
+
+
 def merge_clash_config(base_config, external_configs):
     base_config = base_config or {}
     base_proxies = base_config.setdefault("proxies", [])
@@ -865,42 +889,52 @@ def merge_clash_config(base_config, external_configs):
         for item in list(base_proxies) + list(base_groups)
         if isinstance(item, dict) and item.get("name")
     }
-    selector = next((group for group in base_groups if isinstance(group, dict) and group.get("name") == "🚀 节点选择"), None)
+    base_group_map = {
+        group["name"]: group
+        for group in base_groups
+        if isinstance(group, dict) and group.get("name")
+    }
+    selector_name = "🚀 节点选择"
+    selector = base_group_map.get(selector_name)
     selector_entries = selector.setdefault("proxies", []) if selector is not None else None
 
     for source, external in external_configs:
         prefix = re.sub(r"[^A-Za-z0-9_.-]+", "-", source["name"]).strip("-") or f"sub-{source['id']}"
-        name_map = {}
+        proxy_name_map = {}
         imported_proxy_names = []
         for proxy in external.get("proxies") or []:
             if not isinstance(proxy, dict) or not proxy.get("name"):
                 continue
             copied_proxy = dict(proxy)
             next_name = unique_name(f"{prefix}-{proxy['name']}", used_names)
-            name_map[proxy["name"]] = next_name
+            proxy_name_map[proxy["name"]] = next_name
             copied_proxy["name"] = next_name
             base_proxies.append(copied_proxy)
             imported_proxy_names.append(next_name)
 
         external_groups = [group for group in external.get("proxy-groups") or [] if isinstance(group, dict) and group.get("name")]
-        for group in external_groups:
-            name_map[group["name"]] = unique_name(f"{prefix}-{group['name']}", used_names)
+        external_group_map = {group["name"]: group for group in external_groups}
 
         for group in external_groups:
-            if not isinstance(group, dict) or not group.get("name"):
+            base_group = base_group_map.get(group["name"])
+            if base_group is None:
                 continue
-            copied_group = dict(group)
-            copied_group["name"] = name_map[group["name"]]
-            copied_group["proxies"] = [name_map.get(item, item) for item in group.get("proxies") or []]
-            base_groups.append(copied_group)
+            merged_entries = []
+            for item in group.get("proxies") or []:
+                merged_entries.extend(resolve_external_group_entries(item, external_group_map, proxy_name_map))
+            append_unique(base_group.setdefault("proxies", []), merged_entries)
 
         if selector_entries is not None:
-            target_names = [name_map.get(group.get("name")) for group in external_groups]
-            target_names = [name for name in target_names if name] or imported_proxy_names
-            selector_entries.extend(name for name in target_names if name not in selector_entries)
+            append_unique(selector_entries, imported_proxy_names)
 
+        rule_target_map = dict(proxy_name_map)
+        for group in external_groups:
+            if group["name"] in base_group_map:
+                rule_target_map[group["name"]] = group["name"]
+            elif selector_entries is not None:
+                rule_target_map[group["name"]] = selector_name
         for rule in external.get("rules") or []:
-            base_rules.append(rewrite_rule_target(rule, name_map))
+            base_rules.append(rewrite_rule_target(rule, rule_target_map))
 
     return base_config
 
