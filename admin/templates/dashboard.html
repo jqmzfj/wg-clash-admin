@@ -165,7 +165,7 @@
             <h2>订阅合并</h2>
           </div>
         </div>
-        <form method="post" action="{{ url_for('create_external_subscription') }}" class="subscription-create">
+        <form method="post" action="external-subscriptions/create" class="subscription-create">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <input name="name" placeholder="服务器名称，例如 hk-01" required>
           <input name="url" type="url" placeholder="其他 vpn-admin 的 Clash 订阅链接" required>
@@ -198,11 +198,11 @@
                 <td><code class="table-url">{{ source.url }}</code></td>
                 <td><span class="pill {{ 'ok' if source.is_active else 'off' }}">{{ '启用' if source.is_active else '禁用' }}</span></td>
                 <td class="actions">
-                  <form method="post" action="{{ url_for('toggle_external_subscription', source_id=source.id) }}">
+                  <form method="post" action="external-subscriptions/{{ source.id }}/toggle">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit">{{ '禁用' if source.is_active else '启用' }}</button>
                   </form>
-                  <form method="post" action="{{ url_for('delete_external_subscription', source_id=source.id) }}">
+                  <form method="post" action="external-subscriptions/{{ source.id }}/delete">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" onclick="return window.confirm('确认删除这个订阅源？')">删除</button>
                   </form>
