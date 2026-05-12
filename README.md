@@ -9,9 +9,12 @@
 - 重置用户密码
 - 重置订阅 token，旧 token 立即失效
 - 一键复制每个用户的订阅链接
+- 配置本机节点名前缀，例如把 `peer1` 显示为 `香港1`
+- 合并多台 vpn-admin 的 Clash 订阅
+- 外部订阅失败、错误、超时自动跳过，不影响本机订阅
 - 每 5 小时检测 GitHub 是否发布新版本
 - 发现新版本后提示管理员确认更新
-- 从源码仓库同步白名单文件到运行目录并重建后台容器
+- 使用独立 updater 容器执行稳定更新，先停止旧后台再覆盖文件并重建
 - 修改 WireGuard 公网地址 `SERVERURL`
 - 修改 WireGuard 外网 UDP 端口 `SERVERPORT`
 - 修改 WireGuard 客户端数量 `PEERS`
@@ -446,6 +449,8 @@ WireGuard 内部网段。已有配置生成后不建议随意修改，否则可�
 
 ## 第五步：快捷部署命令
 
+首次部署可以直接使用下面的命令。请先把目录、数据库、Redis、端口按你的服务器实际情况调整好。
+
 ```bash
 mkdir -p /home/wzh/vpn
 cd /home/wzh/vpn
@@ -459,6 +464,12 @@ cp wg-clash-admin/VERSION ./VERSION
 chmod +x ./run.sh
 vim .env
 docker compose up -d --build
+```
+
+如果服务器访问 GitHub 不稳定，可以给 `git clone` 配代理，例如：
+
+```bash
+git -c http.proxy=http://127.0.0.1:7890 -c https.proxy=http://127.0.0.1:7890 clone https://github.com/jqmzfj/wg-clash-admin.git wg-clash-admin
 ```
 
 如果你已经有运行目录，只需要确认源码仓库存在：
@@ -477,6 +488,15 @@ UPDATE_BRANCH=main
 UPDATE_VERSION_FILE=VERSION
 UPDATE_SYNC_COMPOSE=false
 ```
+
+如果你的部署目录不是 `/home/wzh/vpn`，例如 `/home/fzd/vpn`，请把 `.env` 中的路径写成宿主机真实路径：
+
+```env
+VPN_DIR=/home/fzd/vpn
+UPDATE_REPO_DIR=/home/fzd/vpn/wg-clash-admin
+```
+
+这类宿主机路径对在线更新更稳，因为 updater 容器会通过 Docker socket 创建新容器，挂载源路径需要能被宿主机 Docker 识别。
 
 ## 第六步：启动服务
 
@@ -630,6 +650,127 @@ deploy/backups/update-时间戳/
 - 后台登录账号是 `admin` 角色
 
 更新任务提交后页面会立即返回。请等待约 30 秒后刷新页面；如果更新失败，可以在“最近操作”里查看错误原因。
+
+### 手动更新
+
+如果你的当前版本还没有稳定 updater 机制，或页面已经因为半更新出现 500，可以用手动更新。下面命令会先停止旧后台，再覆盖程序文件，最后无缓存重建后台。
+
+请把 `/home/wzh/vpn` 改成你的实际运行目录。
+
+```bash
+cd /home/wzh/vpn
+
+# 拉取最新源码仓库
+git -C wg-clash-admin fetch --all
+git -C wg-clash-admin reset --hard origin/main
+
+# 停止旧后台，避免旧进程读取新模板
+docker compose stop vpn-admin
+docker compose rm -sf vpn-admin
+docker rm -f vpn-admin-updater 2>/dev/null || true
+
+# 备份重要部署文件
+BACKUP_DIR="deploy/backups/manual-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$BACKUP_DIR"
+cp docker-compose.yml "$BACKUP_DIR/docker-compose.yml" 2>/dev/null || true
+cp .env "$BACKUP_DIR/.env" 2>/dev/null || true
+
+# 覆盖程序文件。不要覆盖 .env、vpn-config、clash-config.yaml。
+rm -rf ./admin
+cp -a ./wg-clash-admin/admin ./admin
+cp -a ./wg-clash-admin/run.sh ./run.sh
+cp -a ./wg-clash-admin/generate_clash_yaml.py ./generate_clash_yaml.py
+cp -a ./wg-clash-admin/README.md ./README.md
+cp -a ./wg-clash-admin/.env.example ./.env.example
+cp -a ./wg-clash-admin/VERSION ./VERSION
+
+# 清理运行态缓存
+find ./admin -type d -name "__pycache__" -prune -exec rm -rf {} +
+find ./admin -type f -name "*.pyc" -delete
+
+# 重新构建后台
+docker compose build --no-cache vpn-admin
+docker compose up -d --force-recreate vpn-admin
+
+# 检查
+cat VERSION
+docker logs --tail=120 vpn-admin
+```
+
+如果你的 `docker-compose.yml` 也需要补新版变量，请先备份后手动合并。至少确认包含：
+
+```yaml
+- URL_PREFIX=${URL_PREFIX-/sub/clash}
+- LOCAL_NODE_PREFIX=${LOCAL_NODE_PREFIX:-peer}
+- EXTERNAL_SUBSCRIPTION_TIMEOUT=${EXTERNAL_SUBSCRIPTION_TIMEOUT:-4}
+- EXTERNAL_SUBSCRIPTION_MAX_BYTES=${EXTERNAL_SUBSCRIPTION_MAX_BYTES:-1048576}
+```
+
+`.env` 至少补上：
+
+```env
+LOCAL_NODE_PREFIX=你的节点前缀
+EXTERNAL_SUBSCRIPTION_TIMEOUT=4
+EXTERNAL_SUBSCRIPTION_MAX_BYTES=1048576
+```
+
+### 手动更新快捷命令
+
+确认 `docker-compose.yml` 和 `.env` 已经配置正确后，也可以使用更短的命令：
+
+```bash
+cd /home/wzh/vpn
+git -C wg-clash-admin fetch --all
+git -C wg-clash-admin reset --hard origin/main
+docker compose stop vpn-admin
+docker compose rm -sf vpn-admin
+docker rm -f vpn-admin-updater 2>/dev/null || true
+rm -rf ./admin
+cp -a ./wg-clash-admin/admin ./admin
+cp -a ./wg-clash-admin/run.sh ./run.sh
+cp -a ./wg-clash-admin/generate_clash_yaml.py ./generate_clash_yaml.py
+cp -a ./wg-clash-admin/README.md ./README.md
+cp -a ./wg-clash-admin/.env.example ./.env.example
+cp -a ./wg-clash-admin/VERSION ./VERSION
+docker compose up -d --build --force-recreate vpn-admin
+cat VERSION
+```
+
+如果 GitHub 直连不稳定，可以给拉取命令加代理：
+
+```bash
+git -C wg-clash-admin -c http.proxy=http://127.0.0.1:7890 -c https.proxy=http://127.0.0.1:7890 fetch --all
+```
+
+### 新功能使用说明
+
+`LOCAL_NODE_PREFIX` 用于配置本机节点名。比如这台服务器填：
+
+```env
+LOCAL_NODE_PREFIX=香港
+```
+
+订阅中会显示：
+
+```text
+香港1
+香港2
+```
+
+另一台服务器可以填：
+
+```env
+LOCAL_NODE_PREFIX=日本
+```
+
+合并订阅时就能清晰区分不同服务器。
+
+“订阅合并”用于把多台 vpn-admin 的订阅合成一个。进入后台后添加其他服务器的 Clash 订阅链接即可。每次客户端拉取本机订阅时，后台都会尝试获取外部订阅：
+
+- 成功就合并节点、策略组和规则。
+- 超时、网络错误、HTTP 错误、YAML 异常或文件过大就跳过。
+- 跳过不会阻塞本机订阅返回。
+- 失败详情会写入“最近操作”日志。
 
 ## OpenResty / Nginx 反向代理
 
