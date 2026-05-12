@@ -5,6 +5,7 @@ import hmac
 import os
 import re
 import secrets
+import shlex
 import shutil
 import subprocess
 import threading
@@ -619,9 +620,16 @@ def maybe_start_update_check(force=False):
 def get_version_info():
     maybe_start_update_check()
     state = get_redis().hgetall(UPDATE_STATE_KEY)
+    actual_local_version = read_version(local_version_file()) or "未安装版本"
+    remote_version = state.get("remote_version") or ""
+    state_local_version = state.get("local_version") or actual_local_version
+    if state_local_version != actual_local_version:
+        state_local_version = actual_local_version
+        if remote_version:
+            state["update_available"] = "1" if remote_version != actual_local_version else "0"
     return {
-        "local_version": state.get("local_version") or read_version(local_version_file()) or "未安装版本",
-        "remote_version": state.get("remote_version") or "",
+        "local_version": state_local_version,
+        "remote_version": remote_version,
         "branch": state.get("branch") or UPDATE_BRANCH or "main",
         "repo_dir": state.get("repo_dir") or str(UPDATE_REPO_DIR),
         "repo_url": state.get("repo_url") or UPDATE_REPO_URL,
@@ -696,6 +704,89 @@ def rebuild_admin():
             current_admin_image(),
             "-c",
             script,
+        ],
+        timeout=120,
+    )
+
+
+def update_repo_dir_for_runner():
+    try:
+        return Path("/work") / UPDATE_REPO_DIR.relative_to(VPN_DIR)
+    except ValueError:
+        return Path("/work/wg-clash-admin")
+
+
+def build_stable_update_script(branch, sync_paths):
+    quoted_paths = " ".join(shlex.quote(path.as_posix()) for path in sync_paths)
+    return f"""
+set -eu
+LOG=/work/deploy/update-rebuild.log
+mkdir -p /work/deploy /work/deploy/backups
+exec > "$LOG" 2>&1
+echo "update started at $(date)"
+sleep 2
+cd /work
+REPO_DIR={shlex.quote(str(update_repo_dir_for_runner()))}
+REPO_URL={shlex.quote(UPDATE_REPO_URL)}
+BRANCH={shlex.quote(branch)}
+if [ ! -d "$REPO_DIR/.git" ]; then
+  rm -rf "$REPO_DIR"
+  mkdir -p "$(dirname "$REPO_DIR")"
+  git clone --branch "$BRANCH" "$REPO_URL" "$REPO_DIR"
+fi
+git -C "$REPO_DIR" -c safe.directory="$REPO_DIR" fetch --quiet origin
+git -C "$REPO_DIR" -c safe.directory="$REPO_DIR" checkout "$BRANCH" || git -C "$REPO_DIR" -c safe.directory="$REPO_DIR" checkout -b "$BRANCH" "origin/$BRANCH"
+git -C "$REPO_DIR" -c safe.directory="$REPO_DIR" pull --ff-only origin "$BRANCH"
+echo "stopping old vpn-admin before syncing files"
+docker compose stop vpn-admin || true
+docker compose rm -sf vpn-admin || true
+BACKUP="/work/deploy/backups/update-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$BACKUP"
+for rel in {quoted_paths}; do
+  src="$REPO_DIR/$rel"
+  dst="/work/$rel"
+  if [ ! -e "$src" ] && [ ! -L "$src" ]; then
+    echo "missing sync path: $src"
+    exit 1
+  fi
+  if [ -e "$dst" ] || [ -L "$dst" ]; then
+    mkdir -p "$BACKUP/$(dirname "$rel")"
+    cp -a "$dst" "$BACKUP/$rel"
+  fi
+  rm -rf "$dst"
+  mkdir -p "$(dirname "$dst")"
+  cp -a "$src" "$dst"
+  echo "synced $rel"
+done
+docker compose up -d --build --force-recreate --remove-orphans vpn-admin
+echo "update finished at $(date)"
+""".strip()
+
+
+def start_stable_update_runner(branch, sync_paths):
+    try:
+        run_command(["docker", "rm", "-f", "vpn-admin-updater"], timeout=30)
+    except Exception:
+        pass
+    return run_command(
+        [
+            "docker",
+            "run",
+            "-d",
+            "--rm",
+            "--name",
+            "vpn-admin-updater",
+            "-v",
+            f"{VPN_DIR}:/work",
+            "-v",
+            "/var/run/docker.sock:/var/run/docker.sock",
+            "-w",
+            "/work",
+            "--entrypoint",
+            "sh",
+            current_admin_image(),
+            "-c",
+            build_stable_update_script(branch, sync_paths),
         ],
         timeout=120,
     )
@@ -897,20 +988,12 @@ def version_update_background(lock_id, actor_user_id):
         try:
             ensure_update_repo()
             branch = get_update_branch()
-            repo_git_command(["fetch", "--quiet", "origin"], timeout=180)
-            if not optional_repo_git_command(["rev-parse", "--verify", branch], timeout=8):
-                repo_git_command(["checkout", "-b", branch, f"origin/{branch}"], timeout=120)
-            else:
-                repo_git_command(["checkout", branch], timeout=120)
-            pull_output = repo_git_command(["pull", "--ff-only", "origin", branch], timeout=300)
-            copied, backup_root = sync_update_files()
-            after = optional_repo_git_command(["rev-parse", "--short", "HEAD"], timeout=8) or "unknown"
-            rebuild_output = rebuild_admin()
-            write_update_state(**check_remote_version())
+            sync_paths = parse_update_sync_paths()
+            runner_id = start_stable_update_runner(branch, sync_paths)
+            write_update_state(update_available="0", checking="1", error="")
             detail = (
-                f"{before} -> {after}; branch={branch}; "
-                f"{pull_output or 'already up to date'}; copied={','.join(copied)}; "
-                f"backup={backup_root}; {rebuild_output or 'admin rebuilt'}"
+                f"stable updater started; before={before}; branch={branch}; "
+                f"sync_paths={','.join(path.as_posix() for path in sync_paths)}; runner={runner_id}"
             )
             with get_db().cursor() as cur:
                 cur.execute(
