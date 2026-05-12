@@ -732,7 +732,7 @@ ADMIN_CONTAINER="${{ADMIN_CONTAINER_NAME:-vpn-admin}}"
 COMPOSE_FILE=/work/docker-compose.yml
 ENV_FILE=/work/.env
 if [ -f "$ENV_FILE" ]; then
-  ENV_ADMIN_CONTAINER="$(grep -E '^ADMIN_CONTAINER_NAME=' "$ENV_FILE" | tail -n 1 | cut -d= -f2-)"
+  ENV_ADMIN_CONTAINER="$(grep -E '^ADMIN_CONTAINER_NAME=' "$ENV_FILE" | tail -n 1 | cut -d= -f2- || true)"
   ADMIN_CONTAINER="${{ENV_ADMIN_CONTAINER:-$ADMIN_CONTAINER}}"
 fi
 compose() {{
@@ -797,6 +797,12 @@ for rel in {quoted_paths}; do
   echo "synced $rel"
 done
 echo "after sync version: $(cat /work/{version_path} 2>/dev/null || true)"
+if grep -q "def merge_clash_config" /work/admin/app.py && grep -q "normalize_group_name" /work/admin/app.py; then
+  echo "merge feature check: ok"
+else
+  echo "merge feature check: missing"
+  exit 1
+fi
 echo "building fresh admin image"
 compose build --no-cache "$ADMIN_SERVICE"
 echo "starting fresh admin container"
