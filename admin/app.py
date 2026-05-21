@@ -12,8 +12,9 @@ import threading
 import time
 import urllib.request
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import psycopg
 import redis
@@ -59,6 +60,14 @@ RESERVED_PORTS = {22, 25, 53, 80, 110, 143, 443, 465, 587, 993, 995, 2375, 2376,
 APP_STARTED_AT = int(time.time())
 EXTERNAL_SUBSCRIPTION_TIMEOUT = float(os.environ.get("EXTERNAL_SUBSCRIPTION_TIMEOUT", "4"))
 EXTERNAL_SUBSCRIPTION_MAX_BYTES = int(os.environ.get("EXTERNAL_SUBSCRIPTION_MAX_BYTES", "1048576"))
+EXTERNAL_SUBSCRIPTION_CACHE_TTL = int(os.environ.get("EXTERNAL_SUBSCRIPTION_CACHE_TTL", "300"))
+EXTERNAL_SUBSCRIPTION_STALE_TTL = int(os.environ.get("EXTERNAL_SUBSCRIPTION_STALE_TTL", "86400"))
+EXTERNAL_SUBSCRIPTION_FAILURE_LOG_COOLDOWN = int(
+    os.environ.get("EXTERNAL_SUBSCRIPTION_FAILURE_LOG_COOLDOWN", "1800")
+)
+EXTERNAL_SUBSCRIPTION_PROXY = os.environ.get("EXTERNAL_SUBSCRIPTION_PROXY", "").strip()
+EXTERNAL_SUBSCRIPTION_MAX_FAILURES = int(os.environ.get("EXTERNAL_SUBSCRIPTION_MAX_FAILURES", "10"))
+APP_TIMEZONE = ZoneInfo(os.environ.get("TZ", "Asia/Shanghai"))
 
 
 app = Flask(__name__)
@@ -124,6 +133,23 @@ def required_env(name):
     if not value:
         raise RuntimeError(f"Missing required environment variable: {name}")
     return value
+
+
+def now_local():
+    return datetime.now(APP_TIMEZONE)
+
+
+def to_local_datetime(value):
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc).astimezone(APP_TIMEZONE)
+    return value.astimezone(APP_TIMEZONE)
+
+
+def format_local_datetime(value, fmt="%Y-%m-%d %H:%M:%S"):
+    local_value = to_local_datetime(value)
+    return local_value.strftime(fmt) if local_value else ""
 
 
 def get_db():
@@ -196,11 +222,23 @@ def init_db():
                     name TEXT UNIQUE NOT NULL,
                     url TEXT NOT NULL,
                     is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                    suspended BOOLEAN NOT NULL DEFAULT FALSE,
+                    last_error TEXT NOT NULL DEFAULT '',
+                    last_failed_at TIMESTAMPTZ,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 )
                 """
             )
+            cur.execute(
+                "ALTER TABLE external_subscriptions ADD COLUMN IF NOT EXISTS consecutive_failures INTEGER NOT NULL DEFAULT 0"
+            )
+            cur.execute(
+                "ALTER TABLE external_subscriptions ADD COLUMN IF NOT EXISTS suspended BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+            cur.execute("ALTER TABLE external_subscriptions ADD COLUMN IF NOT EXISTS last_error TEXT NOT NULL DEFAULT ''")
+            cur.execute("ALTER TABLE external_subscriptions ADD COLUMN IF NOT EXISTS last_failed_at TIMESTAMPTZ")
             cur.execute("SELECT COUNT(*) FROM users")
             user_count = cur.fetchone()[0]
             if user_count == 0:
@@ -333,6 +371,15 @@ def log_system_action(action, detail="", success=True):
     get_db().commit()
 
 
+def log_system_action_once(action, detail="", success=True, cooldown_seconds=300, scope=""):
+    redis_client = get_redis()
+    cache_input = f"{action}|{success}|{scope}|{detail[:1800]}"
+    cache_key = "log-once:" + hashlib.sha256(cache_input.encode("utf-8")).hexdigest()
+    if not redis_client.set(cache_key, "1", nx=True, ex=max(1, cooldown_seconds)):
+        return
+    log_system_action(action, detail, success)
+
+
 def get_setting(key, default=""):
     row = query_one("SELECT value FROM settings WHERE key = %s", (key,))
     return row["value"] if row else default
@@ -451,7 +498,7 @@ def operation_lock(name="vpn-admin-lock"):
 
 
 def backup_file(path):
-    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    stamp = now_local().strftime("%Y%m%d-%H%M%S")
     backup = path.with_name(f"{path.name}.{stamp}.bak")
     backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
 
@@ -574,7 +621,7 @@ def check_remote_version():
         "repo_url": UPDATE_REPO_URL,
         "sync_paths": ", ".join(path.as_posix() for path in parse_update_sync_paths()),
         "update_available": "1" if remote_version and remote_version != local_version else "0",
-        "checked_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "checked_at": now_local().strftime("%Y-%m-%d %H:%M:%S"),
         "checked_epoch": str(int(time.time())),
         "checking": "0",
         "error": "",
@@ -594,7 +641,7 @@ def check_update_background(lock_id):
                 repo_url=UPDATE_REPO_URL,
                 sync_paths=", ".join(path.as_posix() for path in parse_update_sync_paths()),
                 update_available="0",
-                checked_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                checked_at=now_local().strftime("%Y-%m-%d %H:%M:%S"),
                 checked_epoch=str(int(time.time())),
                 checking="0",
                 error=str(exc),
@@ -875,21 +922,139 @@ def unique_name(base, used_names):
     return next_name
 
 
+def external_subscription_cache_key(source, suffix):
+    url_hash = hashlib.sha1(source["url"].encode("utf-8")).hexdigest()[:12]
+    return f"external-subscription:{source['id']}:{url_hash}:{suffix}"
+
+
+def get_cached_external_subscription(source, allow_stale=False):
+    redis_client = get_redis()
+    cache_keys = [external_subscription_cache_key(source, "yaml")]
+    if allow_stale:
+        cache_keys.append(external_subscription_cache_key(source, "yaml-stale"))
+    for cache_key in cache_keys:
+        cached_text = redis_client.get(cache_key)
+        if cached_text:
+            return parse_external_subscription_text(cached_text)
+    return None
+
+
+def parse_external_subscription_text(text):
+    data = yaml.safe_load(text) or {}
+    if not isinstance(data, dict):
+        raise RuntimeError("订阅内容不是 YAML 对象")
+    return data
+
+
+def external_subscription_opener():
+    if EXTERNAL_SUBSCRIPTION_PROXY:
+        return urllib.request.build_opener(
+            urllib.request.ProxyHandler(
+                {
+                    "http": EXTERNAL_SUBSCRIPTION_PROXY,
+                    "https": EXTERNAL_SUBSCRIPTION_PROXY,
+                }
+            )
+        )
+    return urllib.request.build_opener()
+
+
+def log_external_subscription_failure(source, message, used_stale_cache):
+    detail = f"{source['name']}: {message}"
+    if used_stale_cache:
+        detail += "；已回退到缓存订阅"
+    log_system_action_once(
+        "merge_subscription_skip",
+        detail,
+        False,
+        cooldown_seconds=EXTERNAL_SUBSCRIPTION_FAILURE_LOG_COOLDOWN,
+        scope=f"{source['id']}:{'stale' if used_stale_cache else 'live'}",
+    )
+
+
+def mark_external_subscription_success(source_id):
+    with get_db().cursor() as cur:
+        cur.execute(
+            """
+            UPDATE external_subscriptions
+            SET consecutive_failures = 0,
+                suspended = FALSE,
+                last_error = '',
+                last_failed_at = NULL,
+                updated_at = NOW()
+            WHERE id = %s
+            """,
+            (source_id,),
+        )
+    get_db().commit()
+
+
+def mark_external_subscription_failure(source, message):
+    row = query_one(
+        """
+        UPDATE external_subscriptions
+        SET consecutive_failures = consecutive_failures + 1,
+            last_error = %s,
+            last_failed_at = NOW(),
+            suspended = CASE
+                WHEN consecutive_failures + 1 >= %s THEN TRUE
+                ELSE suspended
+            END,
+            updated_at = NOW()
+        WHERE id = %s
+        RETURNING consecutive_failures, suspended
+        """,
+        (message[:1800], EXTERNAL_SUBSCRIPTION_MAX_FAILURES, source["id"]),
+    )
+    get_db().commit()
+    failures = row["consecutive_failures"] if row else EXTERNAL_SUBSCRIPTION_MAX_FAILURES
+    suspended = bool(row["suspended"]) if row else False
+    if suspended and failures >= EXTERNAL_SUBSCRIPTION_MAX_FAILURES:
+        log_system_action_once(
+            "external_subscription_suspended",
+            f"{source['name']}: 连续失败 {failures} 次，已自动暂停拉取。最后错误：{message}",
+            False,
+            cooldown_seconds=60 * 60 * 24,
+            scope=str(source["id"]),
+        )
+    return failures, suspended
+
+
 def fetch_external_subscription(source):
+    redis_client = get_redis()
+    hot_cache_key = external_subscription_cache_key(source, "yaml")
+    stale_cache_key = external_subscription_cache_key(source, "yaml-stale")
+    cached_config = get_cached_external_subscription(source)
+    if cached_config is not None:
+        return cached_config
+
     request = urllib.request.Request(
         source["url"],
         headers={"User-Agent": f"wg-clash-admin/{read_version(local_version_file()) or 'local'}"},
     )
-    with urllib.request.urlopen(request, timeout=EXTERNAL_SUBSCRIPTION_TIMEOUT) as response:
-        status = getattr(response, "status", 200)
-        if status >= 400:
-            raise RuntimeError(f"HTTP {status}")
-        content = response.read(EXTERNAL_SUBSCRIPTION_MAX_BYTES + 1)
-        if len(content) > EXTERNAL_SUBSCRIPTION_MAX_BYTES:
-            raise RuntimeError("订阅文件过大")
-    data = yaml.safe_load(content.decode("utf-8")) or {}
-    if not isinstance(data, dict):
-        raise RuntimeError("订阅内容不是 YAML 对象")
+    opener = external_subscription_opener()
+    try:
+        with opener.open(request, timeout=EXTERNAL_SUBSCRIPTION_TIMEOUT) as response:
+            status = getattr(response, "status", 200)
+            if status >= 400:
+                raise RuntimeError(f"HTTP {status}")
+            content = response.read(EXTERNAL_SUBSCRIPTION_MAX_BYTES + 1)
+            if len(content) > EXTERNAL_SUBSCRIPTION_MAX_BYTES:
+                raise RuntimeError("订阅文件过大")
+        text = content.decode("utf-8")
+        data = parse_external_subscription_text(text)
+    except Exception as exc:
+        mark_external_subscription_failure(source, str(exc))
+        stale_text = redis_client.get(stale_cache_key)
+        if stale_text:
+            log_external_subscription_failure(source, str(exc), True)
+            return parse_external_subscription_text(stale_text)
+        log_external_subscription_failure(source, str(exc), False)
+        raise
+
+    redis_client.setex(hot_cache_key, max(1, EXTERNAL_SUBSCRIPTION_CACHE_TTL), text)
+    redis_client.setex(stale_cache_key, max(1, EXTERNAL_SUBSCRIPTION_STALE_TTL), text)
+    mark_external_subscription_success(source["id"])
     return data
 
 
@@ -1006,16 +1171,25 @@ def merge_clash_config(base_config, external_configs):
 def build_subscription_yaml():
     with CLASH_FILE.open("r", encoding="utf-8") as file:
         base_config = yaml.safe_load(file) or {}
-    sources = query_all("SELECT id, name, url FROM external_subscriptions WHERE is_active = TRUE ORDER BY id")
+    sources = query_all(
+        """
+        SELECT id, name, url, consecutive_failures, suspended, last_error, last_failed_at
+        FROM external_subscriptions
+        WHERE is_active = TRUE
+        ORDER BY id
+        """
+    )
     external_configs = []
-    failures = []
     for source in sources:
+        if source.get("suspended"):
+            cached_config = get_cached_external_subscription(source, allow_stale=True)
+            if cached_config is not None:
+                external_configs.append((source, cached_config))
+            continue
         try:
             external_configs.append((source, fetch_external_subscription(source)))
-        except Exception as exc:
-            failures.append(f"{source['name']}: {exc}")
-    if failures:
-        log_system_action("merge_subscription_skip", "; ".join(failures), False)
+        except Exception:
+            continue
     if external_configs:
         base_config = merge_clash_config(base_config, external_configs)
     return yaml.safe_dump(base_config, allow_unicode=True, sort_keys=False)
@@ -1070,7 +1244,7 @@ def copy_item(src, dst, backup_root):
 
 
 def sync_update_files():
-    backup_root = VPN_DIR / "deploy" / "backups" / f"update-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    backup_root = VPN_DIR / "deploy" / "backups" / f"update-{now_local().strftime('%Y%m%d-%H%M%S')}"
     copied = []
     for rel_path in parse_update_sync_paths():
         src = UPDATE_REPO_DIR / rel_path
@@ -1158,7 +1332,11 @@ def load_user():
 
 @app.context_processor
 def inject_globals():
-    return {"csrf_token": csrf_token, "current_user": getattr(g, "user", None)}
+    return {
+        "csrf_token": csrf_token,
+        "current_user": getattr(g, "user", None),
+        "format_local_datetime": format_local_datetime,
+    }
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -1209,7 +1387,11 @@ def dashboard():
     for user in users:
         user["subscription_url"] = url_for("subscription", token=user["sub_token"], _external=True) if user.get("sub_token") else ""
     external_subscriptions = query_all(
-        "SELECT id, name, url, is_active, created_at, updated_at FROM external_subscriptions ORDER BY id"
+        """
+        SELECT id, name, url, is_active, consecutive_failures, suspended, last_error, last_failed_at, created_at, updated_at
+        FROM external_subscriptions
+        ORDER BY id
+        """
     )
     log_total_row = query_one("SELECT COUNT(*) AS total FROM operation_logs")
     log_total = log_total_row["total"] if log_total_row else 0
@@ -1313,9 +1495,45 @@ def toggle_external_subscription(source_id):
     require_admin()
     verify_csrf()
     with get_db().cursor() as cur:
-        cur.execute("UPDATE external_subscriptions SET is_active = NOT is_active, updated_at = NOW() WHERE id = %s", (source_id,))
+        cur.execute(
+            """
+            UPDATE external_subscriptions
+            SET is_active = NOT is_active,
+                consecutive_failures = CASE WHEN NOT is_active THEN 0 ELSE consecutive_failures END,
+                suspended = CASE WHEN NOT is_active THEN FALSE ELSE suspended END,
+                last_error = CASE WHEN NOT is_active THEN '' ELSE last_error END,
+                last_failed_at = CASE WHEN NOT is_active THEN NULL ELSE last_failed_at END,
+                updated_at = NOW()
+            WHERE id = %s
+            """,
+            (source_id,),
+        )
     get_db().commit()
     log_action("toggle_external_subscription", str(source_id))
+    return redirect(url_for("dashboard") + "#subscriptions")
+
+
+@app.route("/external-subscriptions/<int:source_id>/resume", methods=["POST"])
+def resume_external_subscription(source_id):
+    require_admin()
+    verify_csrf()
+    with get_db().cursor() as cur:
+        cur.execute(
+            """
+            UPDATE external_subscriptions
+            SET is_active = TRUE,
+                consecutive_failures = 0,
+                suspended = FALSE,
+                last_error = '',
+                last_failed_at = NULL,
+                updated_at = NOW()
+            WHERE id = %s
+            """,
+            (source_id,),
+        )
+    get_db().commit()
+    log_action("resume_external_subscription", str(source_id))
+    flash("订阅源已恢复，下次拉取订阅时会重新尝试合并。", "success")
     return redirect(url_for("dashboard") + "#subscriptions")
 
 

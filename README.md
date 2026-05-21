@@ -255,6 +255,26 @@ Python 优化等级。默认 `2`，会去掉 assert 和部分调试信息。
 
 单个外部订阅源允许下载的最大字节数。默认 `1048576`，也就是 1MB，用于避免异常大文件拖垮服务。
 
+`EXTERNAL_SUBSCRIPTION_CACHE_TTL`
+
+外部订阅热缓存时间，单位秒。默认 `300`。缓存有效期内不会重复请求远端订阅，能显著减少外部请求量和日志噪音。
+
+`EXTERNAL_SUBSCRIPTION_STALE_TTL`
+
+外部订阅陈旧缓存保留时间，单位秒。默认 `86400`。当远端临时超时或出错时，会优先回退到最近一次成功缓存，避免合并结果瞬间消失。
+
+`EXTERNAL_SUBSCRIPTION_FAILURE_LOG_COOLDOWN`
+
+同一个外部订阅失败日志的最短写入间隔，单位秒。默认 `1800`。用于避免客户端频繁拉取订阅时，把相同失败原因重复写入审计日志。
+
+`EXTERNAL_SUBSCRIPTION_MAX_FAILURES`
+
+单个外部订阅连续失败多少次后自动暂停。默认 `10`。暂停后后台不会继续请求该订阅源，直到管理员在页面上手动恢复。
+
+`EXTERNAL_SUBSCRIPTION_PROXY`
+
+外部订阅请求使用的代理地址。默认留空表示直连。需要走代理时可填写 `http://127.0.0.1:7890`。
+
 ### 订阅合并
 
 后台支持把多台服务器的订阅合并成一个 Clash 订阅。进入后台的“订阅合并”，添加其他 vpn-admin 的 Clash 订阅链接即可。
@@ -262,9 +282,11 @@ Python 优化等级。默认 `2`，会去掉 assert 和部分调试信息。
 工作方式：
 
 - 客户端每次请求本机 `/file/clash.yaml?token=...` 时，后台先读取本机 `clash-config.yaml`。
-- 然后依次请求已启用的外部订阅源。
+- 然后依次请求已启用的外部订阅源；已成功拉取过的内容会先走短期缓存。
 - 请求成功且 YAML 格式正常时，会把外部节点合并到本机订阅中，并把节点直接并入本机同名策略组。
-- 请求失败、超时、HTTP 错误、YAML 异常或文件过大时，会跳过该订阅源，并记录操作日志。
+- 请求失败、超时、HTTP 错误、YAML 异常或文件过大时，会优先回退到最近一次成功缓存；如果没有缓存才跳过该订阅源。
+- 单个外部订阅源连续失败达到阈值后会自动暂停拉取，并记录一条明确日志，等待管理员手动恢复。
+- 相同外部订阅的相同失败原因会按冷却时间限流记录，避免把审计日志刷爆。
 - 任意外部订阅源异常都不会阻塞本机订阅返回。
 
 建议每个外部订阅源使用清晰名称，例如 `hk-01`、`jp-01`。合并时只会给外部节点自动加订阅源名称前缀，避免和本机节点重名；不会单独新增外部策略组。外部分类会按分类名直接合并到本机同名分类，例如多个订阅里的“节点选择”会合并到本机同一个“节点选择”里。外部规则中的分类会映射到本机同名分类，未知分类会回落到本机“节点选择”。
@@ -709,6 +731,11 @@ docker logs --tail=120 vpn-admin
 - LOCAL_NODE_PREFIX=${LOCAL_NODE_PREFIX:-peer}
 - EXTERNAL_SUBSCRIPTION_TIMEOUT=${EXTERNAL_SUBSCRIPTION_TIMEOUT:-4}
 - EXTERNAL_SUBSCRIPTION_MAX_BYTES=${EXTERNAL_SUBSCRIPTION_MAX_BYTES:-1048576}
+- EXTERNAL_SUBSCRIPTION_CACHE_TTL=${EXTERNAL_SUBSCRIPTION_CACHE_TTL:-300}
+- EXTERNAL_SUBSCRIPTION_STALE_TTL=${EXTERNAL_SUBSCRIPTION_STALE_TTL:-86400}
+- EXTERNAL_SUBSCRIPTION_FAILURE_LOG_COOLDOWN=${EXTERNAL_SUBSCRIPTION_FAILURE_LOG_COOLDOWN:-1800}
+- EXTERNAL_SUBSCRIPTION_MAX_FAILURES=${EXTERNAL_SUBSCRIPTION_MAX_FAILURES:-10}
+- EXTERNAL_SUBSCRIPTION_PROXY=${EXTERNAL_SUBSCRIPTION_PROXY:-}
 ```
 
 `.env` 至少补上：
@@ -717,6 +744,11 @@ docker logs --tail=120 vpn-admin
 LOCAL_NODE_PREFIX=你的节点前缀
 EXTERNAL_SUBSCRIPTION_TIMEOUT=4
 EXTERNAL_SUBSCRIPTION_MAX_BYTES=1048576
+EXTERNAL_SUBSCRIPTION_CACHE_TTL=300
+EXTERNAL_SUBSCRIPTION_STALE_TTL=86400
+EXTERNAL_SUBSCRIPTION_FAILURE_LOG_COOLDOWN=1800
+EXTERNAL_SUBSCRIPTION_MAX_FAILURES=10
+EXTERNAL_SUBSCRIPTION_PROXY=http://127.0.0.1:7890
 ```
 
 ### 手动更新快捷命令

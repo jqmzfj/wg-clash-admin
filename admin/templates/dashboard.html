@@ -171,7 +171,7 @@
           <input name="url" type="url" placeholder="其他 vpn-admin 的 Clash 订阅链接" required>
           <button class="secondary-btn" type="submit">添加订阅源</button>
         </form>
-        <p class="version-note">客户端每次拉取本机订阅时，后台会尝试获取启用的外部订阅源并合并节点。外部链接超时、失败或返回异常时会自动跳过，不影响本机订阅。</p>
+        <p class="version-note">客户端每次拉取本机订阅时，后台会尝试获取启用的外部订阅源并合并节点。单个订阅源连续失败 10 次后会自动暂停拉取并提示管理员，重新启用后会清空失败计数。</p>
         <div class="table-wrap">
           <table class="source-table">
             <colgroup>
@@ -195,9 +195,34 @@
               <tr>
                 <td>{{ source.id }}</td>
                 <td>{{ source.name }}</td>
-                <td><code class="table-url">{{ source.url }}</code></td>
-                <td><span class="pill {{ 'ok' if source.is_active else 'off' }}">{{ '启用' if source.is_active else '禁用' }}</span></td>
+                <td>
+                  <code class="table-url">{{ source.url }}</code>
+                  {% if source.last_error %}
+                    <div class="muted" style="margin-top:8px;">
+                      连续失败 {{ source.consecutive_failures }} 次
+                      {% if source.last_failed_at %}
+                        ，最后失败于 {{ format_local_datetime(source.last_failed_at) }}
+                      {% endif %}
+                    </div>
+                    <div class="muted" style="margin-top:4px;">{{ source.last_error }}</div>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if not source.is_active %}
+                    <span class="pill off">禁用</span>
+                  {% elif source.suspended %}
+                    <span class="pill off">已暂停</span>
+                  {% else %}
+                    <span class="pill ok">启用</span>
+                  {% endif %}
+                </td>
                 <td class="actions">
+                  {% if source.suspended %}
+                  <form method="post" action="external-subscriptions/{{ source.id }}/resume">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit">恢复重试</button>
+                  </form>
+                  {% endif %}
                   <form method="post" action="external-subscriptions/{{ source.id }}/toggle">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit">{{ '禁用' if source.is_active else '启用' }}</button>
@@ -310,7 +335,7 @@
                 <strong>{{ log.action }}</strong>
                 <span>{{ log.username or 'system' }}</span>
               </div>
-              <time>{{ log.created_at.strftime('%Y-%m-%d %H:%M:%S') if log.created_at else '' }}</time>
+              <time>{{ format_local_datetime(log.created_at) }}</time>
             </div>
             {% if log.detail %}
               <details class="log-detail">
