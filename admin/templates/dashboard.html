@@ -80,6 +80,14 @@
           <span>本机节点名</span>
           <strong>{{ runtime.local_node_prefix }}1</strong>
         </article>
+        <article class="metric-card">
+          <span>服务端镜像</span>
+          <strong>{{ runtime.wireguard_image }}</strong>
+        </article>
+        <article class="metric-card {{ 'hot' if runtime.awg_enabled else '' }}">
+          <span>AWG 混淆</span>
+          <strong>{{ '已启用' if runtime.awg_enabled else '未启用' }}</strong>
+        </article>
       </section>
 
       <section class="panel-grid single">
@@ -112,6 +120,11 @@
             </div>
             <button class="primary-btn" type="submit">应用并重启容器</button>
           </form>
+          {% if runtime.awg_enabled %}
+            <p class="version-note" style="margin-top:16px;">当前已从 `.env` 读取 AWG 参数：{{ runtime.awg_values|length }} 项。</p>
+          {% else %}
+            <p class="version-note" style="margin-top:16px;">当前未启用 AWG 混淆参数。如需测试，可把 AWG 追加配置整段加到 `.env` 末尾。</p>
+          {% endif %}
         </article>
       </section>
 

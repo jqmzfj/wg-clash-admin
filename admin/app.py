@@ -56,7 +56,7 @@ UPDATE_SYNC_PATHS = os.environ.get(
 UPDATE_STATE_KEY = "version:update_state"
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 14
 LOCK_TTL_SECONDS = 180
-RESERVED_PORTS = {22, 25, 53, 80, 110, 143, 443, 465, 587, 993, 995, 2375, 2376, 5432, 6379}
+RESERVED_PORTS = {22, 25, 53, 80, 110, 143, 465, 587, 993, 995, 2375, 2376, 5432, 6379}
 APP_STARTED_AT = int(time.time())
 EXTERNAL_SUBSCRIPTION_TIMEOUT = float(os.environ.get("EXTERNAL_SUBSCRIPTION_TIMEOUT", "4"))
 EXTERNAL_SUBSCRIPTION_MAX_BYTES = int(os.environ.get("EXTERNAL_SUBSCRIPTION_MAX_BYTES", "1048576"))
@@ -68,6 +68,24 @@ EXTERNAL_SUBSCRIPTION_FAILURE_LOG_COOLDOWN = int(
 EXTERNAL_SUBSCRIPTION_PROXY = os.environ.get("EXTERNAL_SUBSCRIPTION_PROXY", "").strip()
 EXTERNAL_SUBSCRIPTION_MAX_FAILURES = int(os.environ.get("EXTERNAL_SUBSCRIPTION_MAX_FAILURES", "10"))
 APP_TIMEZONE = ZoneInfo(os.environ.get("TZ", "Asia/Shanghai"))
+AWG_CONFIG_KEYS = (
+    "AWG_JC",
+    "AWG_JMIN",
+    "AWG_JMAX",
+    "AWG_S1",
+    "AWG_S2",
+    "AWG_S3",
+    "AWG_S4",
+    "AWG_H1",
+    "AWG_H2",
+    "AWG_H3",
+    "AWG_H4",
+    "AWG_I1",
+    "AWG_I2",
+    "AWG_I3",
+    "AWG_I4",
+    "AWG_I5",
+)
 
 
 app = Flask(__name__)
@@ -454,7 +472,21 @@ def read_runtime_config():
     server_port = int(config_value("SERVERPORT", "51820"))
     peers = int(config_value("PEERS", "1"))
     local_node_prefix = config_value("LOCAL_NODE_PREFIX", "peer")
-    return {"server_url": server_url, "server_port": server_port, "peers": peers, "local_node_prefix": local_node_prefix}
+    wireguard_image = config_value("WIREGUARD_IMAGE", "linuxserver/wireguard:latest")
+    awg_values = {}
+    for key in AWG_CONFIG_KEYS:
+        value = config_value(key, "").strip()
+        if value:
+            awg_values[key] = value
+    return {
+        "server_url": server_url,
+        "server_port": server_port,
+        "peers": peers,
+        "local_node_prefix": local_node_prefix,
+        "wireguard_image": wireguard_image,
+        "awg_enabled": bool(awg_values),
+        "awg_values": awg_values,
+    }
 
 
 def regex_value(text, pattern, default):

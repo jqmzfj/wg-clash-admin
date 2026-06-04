@@ -1,6 +1,6 @@
 services:
   wireguard:
-    image: linuxserver/wireguard:latest
+    image: ${WIREGUARD_IMAGE:-linuxserver/wireguard:latest}
     container_name: ${WIREGUARD_CONTAINER_NAME:-wireguard}
     network_mode: bridge # 默认桥接模式
     cap_add:
@@ -11,13 +11,29 @@ services:
       - PGID=${PGID:-1000}
       - TZ=${TZ:-Asia/Shanghai}
       - SERVERURL=${SERVERURL:?set SERVERURL in .env}
-      - SERVERPORT=${SERVERPORT:-18021}
+      - SERVERPORT=${SERVERPORT:-1234}
       - PEERS=${PEERS:-10}
       - LOCAL_NODE_PREFIX=${LOCAL_NODE_PREFIX:-peer}
       - PEERDNS=${PEERDNS:-1.1.1.1}
       - INTERNAL_SUBNET=${INTERNAL_SUBNET:-10.66.66.0/24}
+      - AWG_JC=${AWG_JC:-}
+      - AWG_JMIN=${AWG_JMIN:-}
+      - AWG_JMAX=${AWG_JMAX:-}
+      - AWG_S1=${AWG_S1:-}
+      - AWG_S2=${AWG_S2:-}
+      - AWG_S3=${AWG_S3:-}
+      - AWG_S4=${AWG_S4:-}
+      - AWG_H1=${AWG_H1:-}
+      - AWG_H2=${AWG_H2:-}
+      - AWG_H3=${AWG_H3:-}
+      - AWG_H4=${AWG_H4:-}
+      - AWG_I1=${AWG_I1:-}
+      - AWG_I2=${AWG_I2:-}
+      - AWG_I3=${AWG_I3:-}
+      - AWG_I4=${AWG_I4:-}
+      - AWG_I5=${AWG_I5:-}
     ports:
-      - "${SERVERPORT:-18021}:51820/udp"
+      - "${SERVERPORT:-1234}:51820/udp"
     volumes:
       - ./vpn-config:/config
     restart: unless-stopped

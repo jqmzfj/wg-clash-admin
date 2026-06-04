@@ -408,6 +408,8 @@ WireGuard 对外 UDP 端口。compose 会映射为：
 SERVERPORT:51820/udp
 ```
 
+如果你所在网络环境经常封高位 UDP，建议优先测试 `9999` 以下低位端口，例如 `1234`、`585`，必要时可尝试 `443`。
+
 `PEERS`
 
 WireGuard 客户端数量。后台页面也可以修改此值。
@@ -440,6 +442,40 @@ LOCAL_NODE_PREFIX=香港
 `INTERNAL_SUBNET`
 
 WireGuard 内部网段。已有配置生成后不建议随意修改，否则可能影响已有客户端。
+
+### AmneziaWG 可选参数
+
+如果你要测试支持 AmneziaWG 的客户端，建议把下面这整段直接追加到现有 `.env` 最底部：
+
+```env
+WIREGUARD_IMAGE=linuxserver/wireguard:latest
+AWG_JC=
+AWG_JMIN=
+AWG_JMAX=
+AWG_S1=
+AWG_S2=
+AWG_S3=
+AWG_S4=
+AWG_H1=
+AWG_H2=
+AWG_H3=
+AWG_H4=
+AWG_I1=
+AWG_I2=
+AWG_I3=
+AWG_I4=
+AWG_I5=
+```
+
+其中：
+
+- `WIREGUARD_IMAGE` 用于切换服务端镜像；不追加这一行时，项目会继续使用默认的 `linuxserver/wireguard:latest`
+- 如果你要实验兼容 AmneziaWG 的镜像，可以改成例如 `amneziavpn/amnezia-wg:latest`
+- `S1-S3` 建议使用 `0-64` 的值，`S4` 建议使用 `0-32` 的值
+- `H1-H4` 可以填写单个整数，也可以填写 AWG 2.0 支持的区间字符串，例如 `123456-123500`
+- `I1-I5` 可以填写 CPS 字符串，例如 `<b 0xf6ab3267fa><r 20>`；需要与你服务端规则一致
+
+这些变量留空时，项目行为与原来的普通 WireGuard 一致；填写后，生成的 Clash/Mihomo 节点会额外带上 `amnezia-wg-option`。这只解决客户端订阅输出，服务端镜像是否兼容当前后台的 peer 目录结构仍需单独验证。
 
 ## 第四步：推荐部署结构
 

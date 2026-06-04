@@ -10,6 +10,40 @@ ENV_FILE = "./.env"
 
 proxies = []
 
+
+def read_optional_int_env(key):
+    raw = read_env_value(key, "").strip()
+    if not raw:
+        return None
+    return int(raw)
+
+
+def read_optional_str_env(key):
+    raw = read_env_value(key, "").strip()
+    return raw or None
+
+
+def build_amnezia_wg_options():
+    mapping = {
+        "jc": read_optional_int_env("AWG_JC"),
+        "jmin": read_optional_int_env("AWG_JMIN"),
+        "jmax": read_optional_int_env("AWG_JMAX"),
+        "s1": read_optional_int_env("AWG_S1"),
+        "s2": read_optional_int_env("AWG_S2"),
+        "s3": read_optional_int_env("AWG_S3"),
+        "s4": read_optional_int_env("AWG_S4"),
+        "h1": read_optional_str_env("AWG_H1"),
+        "h2": read_optional_str_env("AWG_H2"),
+        "h3": read_optional_str_env("AWG_H3"),
+        "h4": read_optional_str_env("AWG_H4"),
+        "i1": read_optional_str_env("AWG_I1"),
+        "i2": read_optional_str_env("AWG_I2"),
+        "i3": read_optional_str_env("AWG_I3"),
+        "i4": read_optional_str_env("AWG_I4"),
+        "i5": read_optional_str_env("AWG_I5"),
+    }
+    return {key: value for key, value in mapping.items() if value is not None}
+
 def read_env_value(key, default=""):
     if os.environ.get(key):
         return os.environ[key]
@@ -53,6 +87,7 @@ def read_peer_limit():
 
 peer_limit = read_peer_limit()
 local_node_prefix = read_env_value("LOCAL_NODE_PREFIX", "peer").strip() or "peer"
+amnezia_wg_options = build_amnezia_wg_options()
 
 for peer_dir in sorted(os.listdir(CONFIG_DIR), key=peer_sort_key):
     peer_match = re.fullmatch(r"peer(\d+)", peer_dir)
@@ -84,7 +119,7 @@ for peer_dir in sorted(os.listdir(CONFIG_DIR), key=peer_sort_key):
     host, port = endpoint.split(":")
 
     node_index = peer_match.group(1) if peer_match else peer_dir
-    proxies.append({
+    proxy = {
         "name": f"{local_node_prefix}{node_index}",
         "type": "wireguard",
         "server": host,
@@ -98,7 +133,10 @@ for peer_dir in sorted(os.listdir(CONFIG_DIR), key=peer_sort_key):
         "remote-dns-resolve": True,
         "dns": ["1.1.1.1", "8.8.8.8"],
         "udp": True
-    })
+    }
+    if amnezia_wg_options:
+        proxy["amnezia-wg-option"] = amnezia_wg_options
+    proxies.append(proxy)
 
 yaml_data = {
     # ✅ 必须项
